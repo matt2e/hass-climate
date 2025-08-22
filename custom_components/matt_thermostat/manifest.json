@@ -1,0 +1,12 @@
+{
+  "domain": "matt_thermostat",
+  "name": "Matt Thermostat",
+  "codeowners": ["@matt2e"],
+  "config_flow": true,
+  "dependencies": ["sensor", "switch"],
+  "documentation": "github.com/matt2e/hass-climate",
+  "issue_tracker": "github.com/matt2e/hass-climate",
+  "integration_type": "helper",
+  "iot_class": "local_polling",
+  "version": "0.0.1"
+}
