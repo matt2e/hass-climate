@@ -12,7 +12,6 @@ from homeassistant.helpers.device import (
 from homeassistant.helpers.event import async_track_entity_registry_updated_event
 from homeassistant.helpers.helper_integration import (
     async_handle_source_entity_changes,
-    async_remove_helper_config_entry_from_source_device,
 )
 
 from .const import CONF_HEATER, CONF_SENSOR, PLATFORMS
@@ -95,11 +94,12 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             if source_device_id := async_entity_id_to_device_id(
                 hass, options[CONF_HEATER]
             ):
-                async_remove_helper_config_entry_from_source_device(
-                    hass,
-                    helper_config_entry_id=config_entry.entry_id,
-                    source_device_id=source_device_id,
-                )
+                # TODO: removed... look at what the new way of doing this is https://developers.home-assistant.io/blog/2025/07/18/updated-pattern-for-helpers-linking-to-devices/
+                # async_remove_helper_config_entry_from_source_device(
+                #     hass,
+                #     helper_config_entry_id=config_entry.entry_id,
+                #     source_device_id=source_device_id,
+                # )
         hass.config_entries.async_update_entry(
             config_entry, options=options, minor_version=2
         )
