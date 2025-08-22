@@ -23,11 +23,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up from a config entry."""
 
     # This can be removed in HA Core 2026.2
-    async_remove_stale_devices_links_keep_entity_device(
-        hass,
-        entry.entry_id,
-        entry.options[CONF_HEATER],
-    )
+    heater = entry.options.get(CONF_HEATER)
+    if heater:
+        async_remove_stale_devices_links_keep_entity_device(
+            hass,
+            entry.entry_id,
+            heater,
+        )
 
     def set_humidifier_entity_id_or_uuid(source_entity_id: str) -> None:
         hass.config_entries.async_update_entry(

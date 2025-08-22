@@ -160,8 +160,8 @@ async def _async_setup_config(
     """Set up the matt thermostat platform."""
 
     name: str = config[CONF_NAME]
-    heater_entity_id: str = config[CONF_HEATER]
-    sensor_entity_id: str = config[CONF_SENSOR]
+    heater_entity_id: str = '' # config[CONF_HEATER]
+    sensor_entity_id: str = '' # config[CONF_SENSOR]
     min_temp: float | None = config.get(CONF_MIN_TEMP)
     max_temp: float | None = config.get(CONF_MAX_TEMP)
     target_temp: float | None = config.get(CONF_TARGET_TEMP)
@@ -235,10 +235,10 @@ class MattThermostat(ClimateEntity, RestoreEntity):
         self._attr_name = name
         self.heater_entity_id = heater_entity_id
         self.sensor_entity_id = sensor_entity_id
-        self.device_entry = async_entity_id_to_device(
-            hass,
-            heater_entity_id,
-        )
+        # self.device_entry = async_entity_id_to_device(
+        #     hass,
+        #     heater_entity_id,
+        # )
         self.ac_mode = ac_mode
         self.min_cycle_duration = min_cycle_duration
         self._cold_tolerance = cold_tolerance
@@ -281,42 +281,42 @@ class MattThermostat(ClimateEntity, RestoreEntity):
         await super().async_added_to_hass()
 
         # Add listener
-        self.async_on_remove(
-            async_track_state_change_event(
-                self.hass, [self.sensor_entity_id], self._async_sensor_changed
-            )
-        )
-        self.async_on_remove(
-            async_track_state_change_event(
-                self.hass, [self.heater_entity_id], self._async_switch_changed
-            )
-        )
+        # self.async_on_remove(
+        #     async_track_state_change_event(
+        #         self.hass, [self.sensor_entity_id], self._async_sensor_changed
+        #     )
+        # )
+        # self.async_on_remove(
+        #     async_track_state_change_event(
+        #         self.hass, [self.heater_entity_id], self._async_switch_changed
+        #     )
+        # )
 
-        if self._keep_alive:
-            self.async_on_remove(
-                async_track_time_interval(
-                    self.hass, self._async_control_heating, self._keep_alive
-                )
-            )
+        # if self._keep_alive:
+        #     self.async_on_remove(
+        #         async_track_time_interval(
+        #             self.hass, self._async_control_heating, self._keep_alive
+        #         )
+        #     )
 
         @callback
         def _async_startup(_: Event | None = None) -> None:
             """Init on startup."""
-            sensor_state = self.hass.states.get(self.sensor_entity_id)
-            if sensor_state and sensor_state.state not in (
-                STATE_UNAVAILABLE,
-                STATE_UNKNOWN,
-            ):
-                self._async_update_temp(sensor_state)
-                self.async_write_ha_state()
-            switch_state = self.hass.states.get(self.heater_entity_id)
-            if switch_state and switch_state.state not in (
-                STATE_UNAVAILABLE,
-                STATE_UNKNOWN,
-            ):
-                self.hass.async_create_task(
-                    self._check_switch_initial_state(), eager_start=True
-                )
+            # sensor_state = self.hass.states.get(self.sensor_entity_id)
+            # if sensor_state and sensor_state.state not in (
+            #     STATE_UNAVAILABLE,
+            #     STATE_UNKNOWN,
+            # ):
+            #     self._async_update_temp(sensor_state)
+            #     self.async_write_ha_state()
+            # switch_state = self.hass.states.get(self.heater_entity_id)
+            # if switch_state and switch_state.state not in (
+            #     STATE_UNAVAILABLE,
+            #     STATE_UNKNOWN,
+            # ):
+            #     self.hass.async_create_task(
+            #         self._check_switch_initial_state(), eager_start=True
+            #     )
 
         if self.hass.state is CoreState.running:
             _async_startup()
@@ -501,97 +501,98 @@ class MattThermostat(ClimateEntity, RestoreEntity):
         self, time: datetime | None = None, force: bool = False
     ) -> None:
         """Check if we need to turn heating on or off."""
-        async with self._temp_lock:
-            if not self._active and None not in (
-                self._cur_temp,
-                self._target_temp,
-            ):
-                self._active = True
-                _LOGGER.debug(
-                    (
-                        "Obtained current and target temperature. "
-                        "Matt thermostat active. %s, %s"
-                    ),
-                    self._cur_temp,
-                    self._target_temp,
-                )
+        # async with self._temp_lock:
+        #     if not self._active and None not in (
+        #         self._cur_temp,
+        #         self._target_temp,
+        #     ):
+        #         self._active = True
+        #         _LOGGER.debug(
+        #             (
+        #                 "Obtained current and target temperature. "
+        #                 "Matt thermostat active. %s, %s"
+        #             ),
+        #             self._cur_temp,
+        #             self._target_temp,
+        #         )
 
-            if not self._active or self._hvac_mode == HVACMode.OFF:
-                return
+        #     if not self._active or self._hvac_mode == HVACMode.OFF:
+        #         return
 
-            # If the `force` argument is True, we
-            # ignore `min_cycle_duration`.
-            # If the `time` argument is not none, we were invoked for
-            # keep-alive purposes, and `min_cycle_duration` is irrelevant.
-            if not force and time is None and self.min_cycle_duration:
-                if self._is_device_active:
-                    current_state = STATE_ON
-                else:
-                    current_state = HVACMode.OFF
-                try:
-                    long_enough = condition.state(
-                        self.hass,
-                        self.heater_entity_id,
-                        current_state,
-                        self.min_cycle_duration,
-                    )
-                except ConditionError:
-                    long_enough = False
+        #     # If the `force` argument is True, we
+        #     # ignore `min_cycle_duration`.
+        #     # If the `time` argument is not none, we were invoked for
+        #     # keep-alive purposes, and `min_cycle_duration` is irrelevant.
+        #     if not force and time is None and self.min_cycle_duration:
+        #         if self._is_device_active:
+        #             current_state = STATE_ON
+        #         else:
+        #             current_state = HVACMode.OFF
+        #         try:
+        #             long_enough = condition.state(
+        #                 self.hass,
+        #                 self.heater_entity_id,
+        #                 current_state,
+        #                 self.min_cycle_duration,
+        #             )
+        #         except ConditionError:
+        #             long_enough = False
 
-                if not long_enough:
-                    return
+        #         if not long_enough:
+        #             return
 
-            assert self._cur_temp is not None and self._target_temp is not None
+        #     assert self._cur_temp is not None and self._target_temp is not None
 
-            min_temp = self._target_temp - self._cold_tolerance
-            max_temp = self._target_temp + self._hot_tolerance
+        #     min_temp = self._target_temp - self._cold_tolerance
+        #     max_temp = self._target_temp + self._hot_tolerance
 
-            if self._is_device_active:
-                if (self.ac_mode and self._cur_temp <= min_temp) or (
-                    not self.ac_mode and self._cur_temp >= max_temp
-                ):
-                    _LOGGER.debug("Turning off heater %s", self.heater_entity_id)
-                    await self._async_heater_turn_off()
-                elif time is not None:
-                    # The time argument is passed only in keep-alive case
-                    _LOGGER.debug(
-                        "Keep-alive - Turning on heater heater %s",
-                        self.heater_entity_id,
-                    )
-                    await self._async_heater_turn_on()
-            elif (self.ac_mode and self._cur_temp > max_temp) or (
-                not self.ac_mode and self._cur_temp < min_temp
-            ):
-                _LOGGER.debug("Turning on heater %s", self.heater_entity_id)
-                await self._async_heater_turn_on()
-            elif time is not None:
-                # The time argument is passed only in keep-alive case
-                _LOGGER.debug(
-                    "Keep-alive - Turning off heater %s", self.heater_entity_id
-                )
-                await self._async_heater_turn_off()
+        #     if self._is_device_active:
+        #         if (self.ac_mode and self._cur_temp <= min_temp) or (
+        #             not self.ac_mode and self._cur_temp >= max_temp
+        #         ):
+        #             _LOGGER.debug("Turning off heater %s", self.heater_entity_id)
+        #             await self._async_heater_turn_off()
+        #         elif time is not None:
+        #             # The time argument is passed only in keep-alive case
+        #             _LOGGER.debug(
+        #                 "Keep-alive - Turning on heater heater %s",
+        #                 self.heater_entity_id,
+        #             )
+        #             await self._async_heater_turn_on()
+        #     elif (self.ac_mode and self._cur_temp > max_temp) or (
+        #         not self.ac_mode and self._cur_temp < min_temp
+        #     ):
+        #         _LOGGER.debug("Turning on heater %s", self.heater_entity_id)
+        #         await self._async_heater_turn_on()
+        #     elif time is not None:
+        #         # The time argument is passed only in keep-alive case
+        #         _LOGGER.debug(
+        #             "Keep-alive - Turning off heater %s", self.heater_entity_id
+        #         )
+        #         await self._async_heater_turn_off()
 
     @property
     def _is_device_active(self) -> bool | None:
         """If the toggleable device is currently active."""
-        if not self.hass.states.get(self.heater_entity_id):
-            return None
+        # if not self.hass.states.get(self.heater_entity_id):
+        #     return None
 
-        return self.hass.states.is_state(self.heater_entity_id, STATE_ON)
+        # return self.hass.states.is_state(self.heater_entity_id, STATE_ON)
+        return False
 
     async def _async_heater_turn_on(self) -> None:
         """Turn heater toggleable device on."""
-        data = {ATTR_ENTITY_ID: self.heater_entity_id}
-        await self.hass.services.async_call(
-            HOMEASSISTANT_DOMAIN, SERVICE_TURN_ON, data, context=self._context
-        )
+        # data = {ATTR_ENTITY_ID: self.heater_entity_id}
+        # await self.hass.services.async_call(
+        #     HOMEASSISTANT_DOMAIN, SERVICE_TURN_ON, data, context=self._context
+        # )
 
     async def _async_heater_turn_off(self) -> None:
         """Turn heater toggleable device off."""
-        data = {ATTR_ENTITY_ID: self.heater_entity_id}
-        await self.hass.services.async_call(
-            HOMEASSISTANT_DOMAIN, SERVICE_TURN_OFF, data, context=self._context
-        )
+        # data = {ATTR_ENTITY_ID: self.heater_entity_id}
+        # await self.hass.services.async_call(
+        #     HOMEASSISTANT_DOMAIN, SERVICE_TURN_OFF, data, context=self._context
+        # )
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Set new preset mode."""
