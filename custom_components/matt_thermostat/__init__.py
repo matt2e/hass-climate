@@ -37,21 +37,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             options={**entry.options, CONF_HEATER: source_entity_id},
         )
 
-    entry.async_on_unload(
-        # We use async_handle_source_entity_changes to track changes to the heater, but
-        # not the temperature sensor because the matt_hygrostat adds itself to the
-        # heater's device.
-        async_handle_source_entity_changes(
-            hass,
-            add_helper_config_entry_to_device=False,
-            helper_config_entry_id=entry.entry_id,
-            set_source_entity_id_or_uuid=set_humidifier_entity_id_or_uuid,
-            source_device_id=async_entity_id_to_device_id(
-                hass, entry.options[CONF_HEATER]
-            ),
-            source_entity_id_or_uuid=entry.options[CONF_HEATER],
+    # We use async_handle_source_entity_changes to track changes to the heater, but
+    # not the temperature sensor because the matt_hygrostat adds itself to the
+    # heater's device.
+    heater = entry.options.get(CONF_HEATER)
+    if heater:
+        entry.async_on_unload(
+            async_handle_source_entity_changes(
+                hass,
+                add_helper_config_entry_to_device=False,
+                helper_config_entry_id=entry.entry_id,
+                set_source_entity_id_or_uuid=set_humidifier_entity_id_or_uuid,
+                source_device_id=async_entity_id_to_device_id(
+                    hass, heater
+                ),
+                source_entity_id_or_uuid=heater,
+            )
         )
-    )
 
     async def async_sensor_updated(
         event: Event[er.EventEntityRegistryUpdatedData],
@@ -69,11 +71,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             options={**entry.options, CONF_SENSOR: data["entity_id"]},
         )
 
-    entry.async_on_unload(
-        async_track_entity_registry_updated_event(
-            hass, entry.options[CONF_SENSOR], async_sensor_updated
+
+    sensor = entry.options.get(CONF_SENSOR)
+    if sensor:
+        entry.async_on_unload(
+            async_track_entity_registry_updated_event(
+                hass, entry.options[CONF_SENSOR], async_sensor_updated
+            )
         )
-    )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(config_entry_update_listener))
