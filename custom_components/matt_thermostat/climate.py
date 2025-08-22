@@ -275,6 +275,7 @@ class MattThermostat(ClimateEntity, RestoreEntity):
         self._presets = presets
         self._presets_inv = {v: k for k, v in presets.items()}
         self._attr_fan_modes = ["one", "two", "three"]
+        self._attr_fan_mode = "one"
 
     async def async_added_to_hass(self) -> None:
         """Run when entity about to be added."""
