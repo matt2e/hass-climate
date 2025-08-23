@@ -7,8 +7,7 @@ from typing import Any, cast
 
 import voluptuous as vol
 
-from homeassistant.components import fan, switch
-from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN, SensorDeviceClass
+from homeassistant.components import climate, input_boolean
 from homeassistant.const import CONF_NAME, DEGREE
 from homeassistant.helpers import selector
 from homeassistant.helpers.schema_config_entry_flow import (
@@ -17,30 +16,23 @@ from homeassistant.helpers.schema_config_entry_flow import (
 )
 
 from .const import (
-    CONF_AC_MODE,
+    CONF_BEDTIME,
     CONF_COLD_TOLERANCE,
-    CONF_HEATER,
     CONF_HOT_TOLERANCE,
+    CONF_MANUAL,
     CONF_MAX_TEMP,
     CONF_MIN_DUR,
     CONF_MIN_TEMP,
-    CONF_PRESETS,
-    CONF_SENSOR,
+    CONF_PRESENCE,
+    CONF_REAL_CLIMATE,
+    CONF_ROOMS,
     DEFAULT_TOLERANCE,
     DOMAIN,
 )
 
 OPTIONS_SCHEMA = {
-    vol.Optional(CONF_AC_MODE): selector.BooleanSelector(
-        selector.BooleanSelectorConfig(),
-    ),
-    vol.Optional(CONF_SENSOR): selector.EntitySelector(
-        selector.EntitySelectorConfig(
-            domain=SENSOR_DOMAIN, device_class=SensorDeviceClass.TEMPERATURE
-        )
-    ),
-    vol.Optional(CONF_HEATER): selector.EntitySelector(
-        selector.EntitySelectorConfig(domain=[fan.DOMAIN, switch.DOMAIN])
+    vol.Optional(CONF_REAL_CLIMATE): selector.EntitySelector(
+        selector.EntitySelectorConfig(domain=[climate.DOMAIN])
     ),
     vol.Required(
         CONF_COLD_TOLERANCE, default=DEFAULT_TOLERANCE
@@ -69,15 +61,18 @@ OPTIONS_SCHEMA = {
             mode=selector.NumberSelectorMode.BOX, unit_of_measurement=DEGREE, step=0.1
         )
     ),
-}
-
-PRESETS_SCHEMA = {
-    vol.Optional(v): selector.NumberSelector(
-        selector.NumberSelectorConfig(
-            mode=selector.NumberSelectorMode.BOX, unit_of_measurement=DEGREE, step=0.1
-        )
-    )
-    for v in CONF_PRESETS.values()
+    vol.Required(CONF_PRESENCE): selector.EntitySelector(
+        selector.EntitySelectorConfig(domain=[input_boolean.DOMAIN])
+    ),
+    vol.Required(CONF_BEDTIME): selector.EntitySelector(
+        selector.EntitySelectorConfig(domain=[input_boolean.DOMAIN])
+    ),
+    vol.Required(CONF_MANUAL): selector.EntitySelector(
+        selector.EntitySelectorConfig(domain=[input_boolean.DOMAIN])
+    ),
+    vol.Required(CONF_ROOMS): selector.TextSelector(
+        selector.TextSelectorConfig(multiline=True)
+    ),
 }
 
 CONFIG_SCHEMA = {
@@ -87,13 +82,11 @@ CONFIG_SCHEMA = {
 
 
 CONFIG_FLOW = {
-    "user": SchemaFlowFormStep(vol.Schema(CONFIG_SCHEMA), next_step="presets"),
-    "presets": SchemaFlowFormStep(vol.Schema(PRESETS_SCHEMA)),
+    "user": SchemaFlowFormStep(vol.Schema(CONFIG_SCHEMA)),
 }
 
 OPTIONS_FLOW = {
-    "init": SchemaFlowFormStep(vol.Schema(OPTIONS_SCHEMA), next_step="presets"),
-    "presets": SchemaFlowFormStep(vol.Schema(PRESETS_SCHEMA)),
+    "init": SchemaFlowFormStep(vol.Schema(OPTIONS_SCHEMA)),
 }
 
 
