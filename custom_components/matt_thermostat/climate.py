@@ -404,10 +404,10 @@ class MattThermostat(ClimateEntity, RestoreEntity):
         # if a target_temperature_step is not defined, fallback to equal the precision
         return self.precision
 
-    # @property
-    # def current_temperature(self) -> float | None:
-    #     """Return the sensor temperature."""
-    #     return self._cur_temp
+    @property
+    def current_temperature(self) -> float | None:
+        """Return the sensor temperature."""
+        return self._cur_temp
 
     @property
     def hvac_mode(self) -> HVACMode | None:
@@ -686,7 +686,7 @@ class MattThermostat(ClimateEntity, RestoreEntity):
             )
 
             if lowest_primary_current_temp is not None:
-                self._attr_current_temperature = lowest_primary_current_temp
+                self._cur_temp = lowest_primary_current_temp
 
             if fan_speed == "off":
                 await call_service(
