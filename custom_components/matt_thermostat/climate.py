@@ -362,10 +362,7 @@ class MattThermostat(ClimateEntity, RestoreEntity):
             if self._target_temp is None:
                 # If we have a previously saved temperature
                 if old_state.attributes.get(ATTR_TEMPERATURE) is None:
-                    if self.ac_mode:
-                        self._target_temp = self.max_temp
-                    else:
-                        self._target_temp = self.min_temp
+                    self._target_temp = 20
                     _LOGGER.warning(
                         "Undefined target temperature, falling back to %s",
                         self._target_temp,
@@ -427,9 +424,11 @@ class MattThermostat(ClimateEntity, RestoreEntity):
             return HVACAction.OFF
         if not self._is_device_active:
             return HVACAction.IDLE
-        if self.ac_mode:
+        if self._hvac_mode == HVACMode.COOL:
             return HVACAction.COOLING
-        return HVACAction.HEATING
+        if self._hvac_mode == HVACMode.HEAT:
+            return HVACAction.HEATING
+        return HVACAction.IDLE
 
     @property
     def target_temperature(self) -> float | None:
