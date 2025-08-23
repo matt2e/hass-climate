@@ -230,20 +230,24 @@ class Room:
         if "cover" not in data or "mode" not in data or "sensor" not in data:
             raise ValueError(f"Room '{name}' must have 'cover' and 'mode' and 'sensor'")
         mode = str(data["mode"])
-        if mode not in (RoomMode.PRIMARY, RoomMode.SECONDARY):
+        if mode not in (RoomMode.PRIMARY, RoomMode.SECONDARY, RoomMode.DISABLED):
             raise ValueError(
-                f"Invalid mode: {mode}, expected one of {RoomMode.PRIMARY}, {RoomMode.SECONDARY}"
+                f"Invalid mode: {mode}, expected one of {RoomMode.PRIMARY}, {RoomMode.SECONDARY}, {RoomMode.DISABLED}"
             )
         bedtime_mode = str(data["bedtime_mode"])
-        if bedtime_mode not in (RoomMode.PRIMARY, RoomMode.SECONDARY):
+        if bedtime_mode not in (
+            RoomMode.PRIMARY,
+            RoomMode.SECONDARY,
+            RoomMode.DISABLED,
+        ):
             raise ValueError(
-                f"Invalid bedtime mode: {bedtime_mode}, expected one of {RoomMode.PRIMARY}, {RoomMode.SECONDARY}"
+                f"Invalid bedtime mode: {bedtime_mode}, expected one of {RoomMode.PRIMARY}, {RoomMode.SECONDARY}, {RoomMode.DISABLED}"
             )
         return Room(
             name=name,
             sensor_entity=str(data["sensor"]),
             cover_entity=str(data["cover"]),
-            light_entity=data.get("light_entity"),
+            light_entity=data.get("light"),
             standard_mode=mode,
             bedtime_mode=bedtime_mode,
             allows_override=bool(data.get("allows_override", False)),
