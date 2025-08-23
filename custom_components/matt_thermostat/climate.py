@@ -632,9 +632,9 @@ class MattThermostat(ClimateEntity, RestoreEntity):
                 await call_service(
                     "cover",
                     "set_cover_position",
-                    {"entity_id": room["cover_entity"], "position": 0},
+                    {"entity_id": room.cover_entity, "position": 0},
                 )
-                await log(f"{room['name']}: Off")
+                await log(f"{room.name}: Off")
                 continue
 
             for room in primary_rooms:
@@ -652,41 +652,39 @@ class MattThermostat(ClimateEntity, RestoreEntity):
                         await call_service(
                             "cover",
                             "set_cover_position",
-                            {"entity_id": room["cover_entity"], "position": 100},
+                            {"entity_id": room.cover_entity, "position": 100},
                         )
-                        await log(f"{room['name']}: 100% (diff > 1.5)")
+                        await log(f"{room.name}: 100% (diff > 1.5)")
                 elif diff > 0.5:
                     fan_speed = "auto"
                     if cover_pos < 100:
                         await call_service(
                             "cover",
                             "set_cover_position",
-                            {"entity_id": room["cover_entity"], "position": 100},
+                            {"entity_id": room.cover_entity, "position": 100},
                         )
-                        await log(f"{room['name']}: 100% (diff > 0.5)")
+                        await log(f"{room.name}: 100% (diff > 0.5)")
                 elif -0.5 < diff <= 0.5 and cover_pos > 0:
                     fan_speed = "auto"
                     if cover_pos < 100:
                         await call_service(
                             "cover",
                             "set_cover_position",
-                            {"entity_id": room["cover_entity"], "position": 100},
+                            {"entity_id": room.cover_entity, "position": 100},
                         )
-                        await log(
-                            f"{room['name']}: 100% (goldilocks zone -> warming up)"
-                        )
+                        await log(f"{room.name}: 100% (goldilocks zone -> warming up)")
 
                 elif diff <= -0.5:
-                    await log(f"{room['name']}: Reached target temperature + buffer")
+                    await log(f"{room.name}: Reached target temperature + buffer")
                     if cover_pos > 0:
                         await call_service(
                             "cover",
                             "set_cover_position",
-                            {"entity_id": room["cover_entity"], "position": 0},
+                            {"entity_id": room.cover_entity, "position": 0},
                         )
 
                 else:
-                    await log(f"{room['name']}: Goldilocks zone -> cooling down")
+                    await log(f"{room.name}: Goldilocks zone -> cooling down")
 
             # --- Apply AC mode, temp, and fan speed ---
             await call_service(
@@ -734,40 +732,40 @@ class MattThermostat(ClimateEntity, RestoreEntity):
                         await call_service(
                             "cover",
                             "set_cover_position",
-                            {"entity_id": room["cover_entity"], "position": 100},
+                            {"entity_id": room.cover_entity, "position": 100},
                         )
-                        await log(f"{room['name']}: 100% (diff > 1.5) (secondary)")
+                        await log(f"{room.name}: 100% (diff > 1.5) (secondary)")
                 elif diff > 0.5:
                     if cover_pos < 100:
                         await call_service(
                             "cover",
                             "set_cover_position",
-                            {"entity_id": room["cover_entity"], "position": 100},
+                            {"entity_id": room.cover_entity, "position": 100},
                         )
-                        await log(f"{room['name']}: 100% (diff > 0.5) (secondary)")
+                        await log(f"{room.name}: 100% (diff > 0.5) (secondary)")
                 elif -0.5 < diff <= 0.5 and cover_pos > 0:
                     if cover_pos < 100:
                         await call_service(
                             "cover",
                             "set_cover_position",
-                            {"entity_id": room["cover_entity"], "position": 100},
+                            {"entity_id": room.cover_entity, "position": 100},
                         )
                         await log(
-                            f"{room['name']}: 100% (goldilocks zone -> warming up) (secondary)"
+                            f"{room.name}: 100% (goldilocks zone -> warming up) (secondary)"
                         )
                 elif diff <= -0.5:
                     if cover_pos > 0:
                         await call_service(
                             "cover",
                             "set_cover_position",
-                            {"entity_id": room["cover_entity"], "position": 0},
+                            {"entity_id": room.cover_entity, "position": 0},
                         )
                         await log(
-                            f"{room['name']}: Reached target temperature + buffer (secondary)"
+                            f"{room.name}: Reached target temperature + buffer (secondary)"
                         )
                 else:
                     await log(
-                        f"{room['name']}: Goldilocks zone -> cooling down (secondary)"
+                        f"{room.name}: Goldilocks zone -> cooling down (secondary)"
                     )
 
         # # If the `force` argument is True, we
