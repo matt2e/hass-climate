@@ -609,9 +609,8 @@ class MattThermostat(ClimateEntity, RestoreEntity):
                 if mode == RoomMode.SECONDARY:
                     real_mode = RoomMode.SECONDARY
                 elif mode == RoomMode.PRIMARY:
-                    light = room.light_entity
-                    if light:
-                        if get_state(light) in [
+                    if room.light_entity:
+                        if get_state(room.light_entity) in [
                             STATE_OFF,
                             STATE_UNAVAILABLE,
                             STATE_UNKNOWN,
