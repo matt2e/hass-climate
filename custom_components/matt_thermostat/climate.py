@@ -554,9 +554,8 @@ class MattThermostat(ClimateEntity, RestoreEntity):
                 "logbook",
                 "log",
                 {
-                    "name": "Room Mode",
+                    "name": "Custom AirCon",
                     "message": message,
-                    "entity_id": "automation.aircon_control",
                 },
             )
 
