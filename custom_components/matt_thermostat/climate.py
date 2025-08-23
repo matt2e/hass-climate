@@ -626,11 +626,17 @@ class MattThermostat(ClimateEntity, RestoreEntity):
                 await log(f"{room.name}: Off")
                 continue
 
+            lowest_primary_current_temp: float | None = None
             for room in primary_rooms:
                 poss_current_temp = get_state(room.sensor_entity)
                 if poss_current_temp is None:
                     continue
                 current_temp = float(poss_current_temp)
+                if (
+                    lowest_primary_current_temp is None
+                    or current_temp < lowest_primary_current_temp
+                ):
+                    lowest_primary_current_temp = current_temp
 
                 diff = self._target_temp - current_temp
                 cover_pos = int(get_attr(room.cover_entity, "current_position", 0))
@@ -684,6 +690,9 @@ class MattThermostat(ClimateEntity, RestoreEntity):
                     ATTR_TEMPERATURE: math.ceil(self._target_temp),
                 },
             )
+
+            if lowest_primary_current_temp is not None:
+                self._attr_current_temperature = lowest_primary_current_temp
 
             if fan_speed == "off":
                 await call_service(
@@ -765,10 +774,8 @@ class MattThermostat(ClimateEntity, RestoreEntity):
         if climate_state is None:
             return False
 
-        if (
-            climate_state.attributes.get("hvac_action") == HVACAction.IDLE
-            or climate_state.attributes.get("hvac_action") == HVACAction.OFF
-        ):
+        real_hvac_action = climate_state.attributes.get("hvac_action")
+        if real_hvac_action in (HVACAction.IDLE, HVACAction.OFF):
             return False
 
         return True
