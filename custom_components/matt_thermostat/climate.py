@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 import json
 import logging
+import math
 from typing import Any
 
 import voluptuous as vol
@@ -691,7 +692,7 @@ class MattThermostat(ClimateEntity, RestoreEntity):
                 "set_temperature",
                 {
                     "entity_id": self._real_climate_entity_id,
-                    ATTR_TEMPERATURE: self._target_temp,
+                    ATTR_TEMPERATURE: math.ceil(self._target_temp),
                 },
             )
 
