@@ -29,9 +29,7 @@ from homeassistant.const import (
     CONF_NAME,
     CONF_UNIQUE_ID,
     EVENT_HOMEASSISTANT_START,
-    PRECISION_HALVES,
     PRECISION_TENTHS,
-    PRECISION_WHOLE,
     STATE_OFF,
     STATE_ON,
     STATE_UNAVAILABLE,
@@ -70,9 +68,7 @@ _LOGGER = logging.getLogger(__name__)
 DEFAULT_NAME = "Matt Thermostat"
 
 CONF_INITIAL_HVAC_MODE = "initial_hvac_mode"
-CONF_PRECISION = "precision"
 CONF_TARGET_TEMP = "target_temp"
-CONF_TEMP_STEP = "target_temp_step"
 
 PLATFORM_SCHEMA_COMMON = vol.Schema(
     {
@@ -90,13 +86,6 @@ PLATFORM_SCHEMA_COMMON = vol.Schema(
         vol.Optional(CONF_TARGET_TEMP): vol.Coerce(float),
         vol.Optional(CONF_INITIAL_HVAC_MODE): vol.In(
             [HVACMode.COOL, HVACMode.HEAT, HVACMode.OFF]
-        ),
-        vol.Optional(CONF_PRECISION): vol.All(
-            vol.Coerce(float),
-            vol.In([PRECISION_TENTHS, PRECISION_HALVES, PRECISION_WHOLE]),
-        ),
-        vol.Optional(CONF_TEMP_STEP): vol.All(
-            vol.In([PRECISION_TENTHS, PRECISION_HALVES, PRECISION_WHOLE])
         ),
         vol.Optional(CONF_UNIQUE_ID): cv.string,
     }
@@ -154,9 +143,10 @@ async def _async_setup_config(
     cold_tolerance: float = config[CONF_COLD_TOLERANCE]
     hot_tolerance: float = config[CONF_HOT_TOLERANCE]
     initial_hvac_mode: HVACMode | None = config.get(CONF_INITIAL_HVAC_MODE)
-    precision: float | None = config.get(CONF_PRECISION)
-    target_temperature_step: float | None = config.get(CONF_TEMP_STEP)
     unit = hass.config.units.temperature_unit
+
+    precision: float | None = config.get(PRECISION_TENTHS)
+    target_temperature_step = 0.1
 
     data = json.loads(config[CONF_ROOMS])
     if not isinstance(data, list):
