@@ -288,7 +288,6 @@ class MattThermostat(ClimateEntity, RestoreEntity):
         self._temp_target_temperature_step = target_temperature_step
         self._attr_hvac_modes = [HVACMode.OFF, HVACMode.COOL, HVACMode.HEAT]
         self._active = False
-        self._cur_temp: float | None = None
         self._temp_lock = asyncio.Lock()
         self._min_temp = min_temp
         self._max_temp = max_temp
@@ -403,11 +402,6 @@ class MattThermostat(ClimateEntity, RestoreEntity):
             return self._temp_target_temperature_step
         # if a target_temperature_step is not defined, fallback to equal the precision
         return self.precision
-
-    @property
-    def current_temperature(self) -> float | None:
-        """Return the sensor temperature."""
-        return self._cur_temp
 
     @property
     def hvac_mode(self) -> HVACMode | None:
@@ -686,7 +680,10 @@ class MattThermostat(ClimateEntity, RestoreEntity):
             )
 
             if lowest_primary_current_temp is not None:
-                self._cur_temp = lowest_primary_current_temp
+                _LOGGER.info(
+                    f"Lowest primary current temperature: {lowest_primary_current_temp}"
+                )
+                self._attr_current_temperature = lowest_primary_current_temp
 
             if fan_speed == "off":
                 await call_service(
@@ -765,6 +762,7 @@ class MattThermostat(ClimateEntity, RestoreEntity):
         """If the toggleable device is currently active."""
 
         climate_state = self.hass.states.get(self._real_climate_entity_id)
+        _LOGGER.info(f"real climate state: {climate_state}")
         if climate_state is None:
             return False
 
