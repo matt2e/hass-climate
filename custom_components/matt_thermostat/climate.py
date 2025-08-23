@@ -641,7 +641,7 @@ class MattThermostat(ClimateEntity, RestoreEntity):
                 diff = self._target_temp - current_temp
                 cover_pos = int(get_attr(room.cover_entity, "current_position", 0))
 
-                if diff > 1.5:
+                if diff > self._cold_tolerance:
                     fan_speed = "auto"
                     if cover_pos < 100:
                         await call_service(
@@ -649,17 +649,11 @@ class MattThermostat(ClimateEntity, RestoreEntity):
                             "set_cover_position",
                             {"entity_id": room.cover_entity, "position": 100},
                         )
-                        await log(f"{room.name}: 100% (diff > 1.5)")
-                elif diff > 0.5:
-                    fan_speed = "auto"
-                    if cover_pos < 100:
-                        await call_service(
-                            "cover",
-                            "set_cover_position",
-                            {"entity_id": room.cover_entity, "position": 100},
-                        )
-                        await log(f"{room.name}: 100% (diff > 0.5)")
-                elif -0.5 < diff <= 0.5 and cover_pos > 0:
+                        await log(f"{room.name}: 100% (outside of range)")
+                elif (
+                    -1 * self._hot_tolerance < diff <= self._cold_tolerance
+                    and cover_pos > 0
+                ):
                     fan_speed = "auto"
                     if cover_pos < 100:
                         await call_service(
@@ -669,7 +663,7 @@ class MattThermostat(ClimateEntity, RestoreEntity):
                         )
                         await log(f"{room.name}: 100% (goldilocks zone -> warming up)")
 
-                elif diff <= -0.5:
+                elif diff <= -1 * self._hot_tolerance:
                     await log(f"{room.name}: Reached target temperature + buffer")
                     if cover_pos > 0:
                         await call_service(
