@@ -757,58 +757,6 @@ class MattThermostat(ClimateEntity, RestoreEntity):
                         f"{room.name}: Goldilocks zone -> cooling down (secondary)"
                     )
 
-        # # If the `force` argument is True, we
-        # # ignore `min_cycle_duration`.
-        # # If the `time` argument is not none, we were invoked for
-        # # keep-alive purposes, and `min_cycle_duration` is irrelevant.
-        # if not force and time is None and self.min_cycle_duration:
-        #     if self._is_device_active:
-        #         current_state = STATE_ON
-        #     else:
-        #         current_state = HVACMode.OFF
-        #     try:
-        #         long_enough = condition.state(
-        #             self.hass,
-        #             self.heater_entity_id,
-        #             current_state,
-        #             self.min_cycle_duration,
-        #         )
-        #     except ConditionError:
-        #         long_enough = False
-
-        #     if not long_enough:
-        #         return
-
-        # assert self._cur_temp is not None and self._target_temp is not None
-
-        # min_temp = self._target_temp - self._cold_tolerance
-        # max_temp = self._target_temp + self._hot_tolerance
-
-        # if self._is_device_active:
-        #     if (self.ac_mode and self._cur_temp <= min_temp) or (
-        #         not self.ac_mode and self._cur_temp >= max_temp
-        #     ):
-        #         _LOGGER.debug("Turning off heater %s", self.heater_entity_id)
-        #         await self._async_heater_turn_off()
-        #     elif time is not None:
-        #         # The time argument is passed only in keep-alive case
-        #         _LOGGER.debug(
-        #             "Keep-alive - Turning on heater heater %s",
-        #             self.heater_entity_id,
-        #         )
-        #         await self._async_heater_turn_on()
-        # elif (self.ac_mode and self._cur_temp > max_temp) or (
-        #     not self.ac_mode and self._cur_temp < min_temp
-        # ):
-        #     _LOGGER.debug("Turning on heater %s", self.heater_entity_id)
-        #     await self._async_heater_turn_on()
-        # elif time is not None:
-        #     # The time argument is passed only in keep-alive case
-        #     _LOGGER.debug(
-        #         "Keep-alive - Turning off heater %s", self.heater_entity_id
-        #     )
-        #     await self._async_heater_turn_off()
-
     @property
     def _is_device_active(self) -> bool | None:
         """If the toggleable device is currently active."""
@@ -824,45 +772,3 @@ class MattThermostat(ClimateEntity, RestoreEntity):
             return False
 
         return True
-        # if not self.hass.states.get(self.heater_entity_id):
-        #     return None
-
-        # return self.hass.states.is_state(self.heater_entity_id, STATE_ON)
-        # return False
-
-    # async def _async_heater_turn_on(self) -> None:
-    #     """Turn heater toggleable device on."""
-    # data = {ATTR_ENTITY_ID: self.heater_entity_id}
-    # await self.hass.services.async_call(
-    #     HOMEASSISTANT_DOMAIN, SERVICE_TURN_ON, data, context=self._context
-    # )
-
-    # async def _async_heater_turn_off(self) -> None:
-    #     """Turn heater toggleable device off."""
-    # data = {ATTR_ENTITY_ID: self.heater_entity_id}
-    # await self.hass.services.async_call(
-    #     HOMEASSISTANT_DOMAIN, SERVICE_TURN_OFF, data, context=self._context
-    # )
-
-    # async def async_set_preset_mode(self, preset_mode: str) -> None:
-    #     """Set new preset mode."""
-    #     if preset_mode not in (self.preset_modes or []):
-    #         raise ValueError(
-    #             f"Got unsupported preset_mode {preset_mode}. Must be one of"
-    #             f" {self.preset_modes}"
-    #         )
-    #     if preset_mode == self._attr_preset_mode:
-    #         # I don't think we need to call async_write_ha_state if we didn't change the state
-    #         return
-    #     if preset_mode == PRESET_NONE:
-    #         self._attr_preset_mode = PRESET_NONE
-    #         self._target_temp = self._saved_target_temp
-    #         await self._async_control_heating(force=True)
-    #     else:
-    #         if self._attr_preset_mode == PRESET_NONE:
-    #             self._saved_target_temp = self._target_temp
-    #         self._attr_preset_mode = preset_mode
-    #         self._target_temp = self._presets[preset_mode]
-    #         await self._async_control_heating(force=True)
-
-    #     self.async_write_ha_state()
