@@ -287,7 +287,7 @@ class MattThermostat(ClimateEntity, RestoreEntity):
         self._real_climate_entity_id = real_climate_entity_id
         self._bedtime_entity_id = bedtime_entity_id
         self._presence_entity_id = presence_entity_id
-        self.manual_entity_id = manual_entity_id
+        self._manual_entity_id = manual_entity_id
         self._min_cycle_duration = min_cycle_duration
         self._cold_tolerance = cold_tolerance
         self._hot_tolerance = hot_tolerance
