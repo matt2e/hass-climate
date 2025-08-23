@@ -449,17 +449,14 @@ class MattThermostat(ClimateEntity, RestoreEntity):
         """Set hvac mode."""
         if hvac_mode == HVACMode.HEAT:
             self._hvac_mode = HVACMode.HEAT
-            await self._async_control_real_climate(force=True)
         elif hvac_mode == HVACMode.COOL:
             self._hvac_mode = HVACMode.COOL
-            await self._async_control_real_climate(force=True)
         elif hvac_mode == HVACMode.OFF:
             self._hvac_mode = HVACMode.OFF
-            if self._is_device_active:
-                await self._async_heater_turn_off()
         else:
             _LOGGER.error("Unrecognized hvac mode: %s", hvac_mode)
             return
+        await self._async_control_real_climate(force=True)
         # Ensure we update the current operation after changing the mode
         self.async_write_ha_state()
 
@@ -829,25 +826,37 @@ class MattThermostat(ClimateEntity, RestoreEntity):
     @property
     def _is_device_active(self) -> bool | None:
         """If the toggleable device is currently active."""
+
+        climate_state = self.hass.states.get(self._real_climate_entity_id)
+        if climate_state is None:
+            return False
+
+        if (
+            climate_state.attributes.get("hvac_action") == HVACAction.IDLE
+            or climate_state.attributes.get("hvac_action") == HVACAction.OFF
+        ):
+            return False
+
+        return True
         # if not self.hass.states.get(self.heater_entity_id):
         #     return None
 
         # return self.hass.states.is_state(self.heater_entity_id, STATE_ON)
-        return False
+        # return False
 
-    async def _async_heater_turn_on(self) -> None:
-        """Turn heater toggleable device on."""
-        # data = {ATTR_ENTITY_ID: self.heater_entity_id}
-        # await self.hass.services.async_call(
-        #     HOMEASSISTANT_DOMAIN, SERVICE_TURN_ON, data, context=self._context
-        # )
+    # async def _async_heater_turn_on(self) -> None:
+    #     """Turn heater toggleable device on."""
+    # data = {ATTR_ENTITY_ID: self.heater_entity_id}
+    # await self.hass.services.async_call(
+    #     HOMEASSISTANT_DOMAIN, SERVICE_TURN_ON, data, context=self._context
+    # )
 
-    async def _async_heater_turn_off(self) -> None:
-        """Turn heater toggleable device off."""
-        # data = {ATTR_ENTITY_ID: self.heater_entity_id}
-        # await self.hass.services.async_call(
-        #     HOMEASSISTANT_DOMAIN, SERVICE_TURN_OFF, data, context=self._context
-        # )
+    # async def _async_heater_turn_off(self) -> None:
+    #     """Turn heater toggleable device off."""
+    # data = {ATTR_ENTITY_ID: self.heater_entity_id}
+    # await self.hass.services.async_call(
+    #     HOMEASSISTANT_DOMAIN, SERVICE_TURN_OFF, data, context=self._context
+    # )
 
     # async def async_set_preset_mode(self, preset_mode: str) -> None:
     #     """Set new preset mode."""
