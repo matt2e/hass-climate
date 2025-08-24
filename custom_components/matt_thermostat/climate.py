@@ -172,6 +172,10 @@ async def _async_setup_config(
         for room in rooms
         if room.allows_override
     }
+
+    # add child thermostats and wait, which gives them each an entity id
+    await async_add_entities(list(child_thermostats.values()))
+
     async_add_entities(
         [
             ParentThermostat(
