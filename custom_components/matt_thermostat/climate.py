@@ -642,7 +642,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             for room in custom_rooms:
                 child_thermo = self._child_thermostats.get(room.name)
 
-                target_temp = self._target_temp or self.target_temperature
+                target_temp = child_thermo.target_temperature or self._target_temp
                 highest_target_temperature = max(
                     highest_target_temperature, target_temp
                 )
@@ -733,7 +733,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         self, room: Room, current_temp: float, target_temp: float
     ) -> bool:
         """Update the target temperature for a room."""
-        diff = self._target_temp - current_temp
+        diff = target_temp - current_temp
         cover_state = self.hass.states.get(room.cover_entity)
         cover_pos = (
             cover_state.attributes.get("current_position", 0) if cover_state else 0
