@@ -896,15 +896,7 @@ class ChildThermostat(ClimateEntity, RestoreEntity):
 
         Need to be one of CURRENT_HVAC_*.
         """
-        if self._hvac_mode == HVACMode.OFF:
-            return HVACAction.OFF
-        if not self._is_device_active:
-            return HVACAction.IDLE
-        if self._hvac_mode == HVACMode.COOL:
-            return HVACAction.COOLING
-        if self._hvac_mode == HVACMode.HEAT:
-            return HVACAction.HEATING
-        return HVACAction.IDLE
+        return self._hvac_action
 
     @property
     def target_temperature(self) -> float | None:
@@ -973,17 +965,3 @@ class ChildThermostat(ClimateEntity, RestoreEntity):
 
         # Get default temp from super class
         return super().max_temp
-
-    @property
-    def _is_device_active(self) -> bool | None:
-        """If the toggleable device is currently active."""
-
-        climate_state = self.hass.states.get(self._real_climate_entity_id)
-        if climate_state is None:
-            return False
-
-        real_hvac_action = climate_state.attributes.get("hvac_action")
-        if real_hvac_action in (HVACAction.IDLE, HVACAction.OFF):
-            return False
-
-        return True
