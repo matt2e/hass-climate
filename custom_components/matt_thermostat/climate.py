@@ -647,7 +647,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     highest_target_temperature, target_temp
                 )
 
-                sensor_state = self.hass.states.get(room.cover_entity)
+                sensor_state = self.hass.states.get(room.sensor_entity)
                 if sensor_state is None:
                     continue
                 current_temp = float(sensor_state.state)
@@ -659,7 +659,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     fan_speed = "auto"
 
             for room in primary_rooms:
-                sensor_state = self.hass.states.get(room.cover_entity)
+                sensor_state = self.hass.states.get(room.sensor_entity)
                 if sensor_state is None:
                     continue
                 current_temp = float(sensor_state.state)
@@ -720,7 +720,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         target_temp_secondary = max(self._target_temp - 2, 16)
 
         for room in secondary_rooms:
-            sensor_state = self.hass.states.get(room.cover_entity)
+            sensor_state = self.hass.states.get(room.sensor_entity)
             if sensor_state is None:
                 continue
             current_temp = float(sensor_state.state)
@@ -772,7 +772,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             if child_thermo is None:
                 continue
 
-            sensor_state = self.hass.states.get(room.cover_entity)
+            sensor_state = self.hass.states.get(room.sensor_entity)
             if sensor_state is None:
                 continue
             current_temp = float(sensor_state.state)
