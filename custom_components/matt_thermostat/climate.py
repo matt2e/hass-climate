@@ -837,7 +837,7 @@ class ChildThermostat(ClimateEntity, RestoreEntity):
     ) -> None:
         """Initialize the thermostat."""
         self._attr_name = name
-        self._hvac_mode = HVACMode.OFF
+        self._hvac_mode = HVACMode.AUTO
         self._hvac_action = HVACAction.OFF
         self._saved_target_temp = target_temp
         self._temp_precision = precision
@@ -850,11 +850,7 @@ class ChildThermostat(ClimateEntity, RestoreEntity):
         self._target_temp = target_temp
         self._attr_temperature_unit = unit
         self._attr_unique_id = unique_id
-        self._attr_supported_features = (
-            ClimateEntityFeature.TARGET_TEMPERATURE
-            | ClimateEntityFeature.TURN_OFF
-            | ClimateEntityFeature.TURN_ON
-        )
+        self._attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE
         self._attr_preset_modes = [PRESET_NONE]
 
     async def async_added_to_hass(self) -> None:
@@ -870,9 +866,9 @@ class ChildThermostat(ClimateEntity, RestoreEntity):
         else:
             self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_START, _async_startup)
 
-        # Set default state to off
+        # Set default state to Auto
         if not self._hvac_mode:
-            self._hvac_mode = HVACMode.OFF
+            self._hvac_mode = HVACMode.AUTO
 
     @property
     def precision(self) -> float:
@@ -945,25 +941,25 @@ class ChildThermostat(ClimateEntity, RestoreEntity):
             self._hvac_mode = HVACMode.HEAT
         elif hvac_mode == HVACMode.COOL:
             self._hvac_mode = HVACMode.COOL
-        elif hvac_mode == HVACMode.OFF:
-            self._hvac_mode = HVACMode.OFF
+        elif hvac_mode == HVACMode.AUTO:
+            self._hvac_mode = HVACMode.AUTO
         else:
             _LOGGER.error("Unrecognized hvac mode: %s", hvac_mode)
             return
-        await self._async_control_real_climate(force=True)
         # Ensure we update the current operation after changing the mode
         self.async_write_ha_state()
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
+        await self._async_control_real_climate(force=True)
         """Set new target temperature."""
         if (temperature := kwargs.get(ATTR_TEMPERATURE)) is None:
             return
         self._target_temp = temperature
-        await self._async_control_real_climate(force=True)
         self.async_write_ha_state()
 
     @property
     def min_temp(self) -> float:
+        await self._async_control_real_climate(force=True)
         """Return the minimum temperature."""
         if self._min_temp is not None:
             return self._min_temp
