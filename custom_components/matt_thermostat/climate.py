@@ -871,14 +871,6 @@ class ChildThermostat(ClimateEntity, RestoreEntity):
         """Run when entity about to be added."""
         await super().async_added_to_hass()
 
-        self.async_on_remove(
-            async_track_time_interval(
-                self.hass,
-                self._async_poll_for_changes,
-                timedelta(seconds=30),
-            )
-        )
-
         @callback
         def _async_startup(_: Event | None = None) -> None:
             """Init on startup."""
