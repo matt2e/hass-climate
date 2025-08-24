@@ -640,7 +640,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 )
 
             for room in custom_rooms:
-                child_thermo = room.child_thermostat
+                child_thermo = self._child_thermostats.get(room.name)
 
                 target_temp = self._target_temp or self.target_temperature
                 highest_target_temperature = max(
@@ -768,7 +768,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
     async def async_update_child_thermostats(self):
         """Update child thermostat state."""
         for room in self._rooms:
-            child_thermo = room.child_thermostat
+            child_thermo = self._child_thermostats.get(room.name)
             if child_thermo is None:
                 continue
 
