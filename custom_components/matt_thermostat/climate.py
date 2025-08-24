@@ -788,7 +788,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 child_action = self.hvac_action
 
             await child_thermo.async_set_child_state(
-                parent_target_temperature=self._target_temperature,
+                parent_target_temperature=self._target_temp,
                 current_temperature=current_temp,
                 hvac_action=child_action,
             )
