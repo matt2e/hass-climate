@@ -326,7 +326,7 @@ class MattThermostat(ClimateEntity, RestoreEntity):
         self.async_on_remove(
             async_track_time_interval(
                 self.hass,
-                self._async_control_real_climate,
+                self._async_poll_for_changes,
                 timedelta(seconds=30),
             )
         )
@@ -516,9 +516,12 @@ class MattThermostat(ClimateEntity, RestoreEntity):
     #     except ValueError as ex:
     #         _LOGGER.error("Unable to update from sensor: %s", ex)
 
-    async def _async_control_real_climate(
-        self, time: datetime | None = None, force: bool = False
-    ) -> None:
+    async def _async_poll_for_changes(self, time: datetime | None = None) -> None:
+        """Called each time we check for changes."""
+        await self._async_control_real_climate()
+        self.async_write_ha_state()
+
+    async def _async_control_real_climate(self, force: bool = False) -> None:
         """Check if we need to turn heating on or off."""
 
         # --- Helpers ---
@@ -680,9 +683,6 @@ class MattThermostat(ClimateEntity, RestoreEntity):
             )
 
             if lowest_primary_current_temp is not None:
-                _LOGGER.info(
-                    f"Lowest primary current temperature: {lowest_primary_current_temp}"
-                )
                 self._attr_current_temperature = lowest_primary_current_temp
 
             if fan_speed == "off":
@@ -762,7 +762,6 @@ class MattThermostat(ClimateEntity, RestoreEntity):
         """If the toggleable device is currently active."""
 
         climate_state = self.hass.states.get(self._real_climate_entity_id)
-        _LOGGER.info(f"real climate state: {climate_state}")
         if climate_state is None:
             return False
 
