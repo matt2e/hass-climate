@@ -539,7 +539,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
     #     except ValueError as ex:
     #         _LOGGER.error("Unable to update from sensor: %s", ex)
 
-    async def _async_child_thermostat_changed(self) -> None:
+    async def _async_child_thermostat_changed(self, event: Any) -> None:
         """Called each time a child thermostat changes."""
         await self._async_control_real_climate()
         self.async_write_ha_state()
