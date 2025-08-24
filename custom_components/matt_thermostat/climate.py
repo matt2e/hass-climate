@@ -570,14 +570,14 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             if not self._active:
                 return
 
-            presence = self.hass.states.get(self._presence_entity_id)
-            manual = self.hass.states.get(self._manual_entity_id)
-            bedtime = self.hass.states.get(self._bedtime_entity_id) == STATE_ON
+            presence = self.hass.states.get(self._presence_entity_id).state == STATE_ON
+            manual = self.hass.states.get(self._manual_entity_id).state == STATE_ON
+            bedtime = self.hass.states.get(self._bedtime_entity_id).state == STATE_ON
 
-            if manual == STATE_ON:
+            if manual:
                 return
 
-            if presence == STATE_OFF or self._hvac_mode == HVACMode.OFF:
+            if not presence or self._hvac_mode == HVACMode.OFF:
                 await self.hass.services.async_call(
                     "climate",
                     "set_hvac_mode",
@@ -613,7 +613,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     real_mode = RoomMode.SECONDARY
                 elif mode == RoomMode.PRIMARY:
                     if room.light_entity and not bedtime:
-                        if self.hass.states.get(room.light_entity) in [
+                        if self.hass.states.get(room.light_entity).state in [
                             STATE_OFF,
                             STATE_UNAVAILABLE,
                             STATE_UNKNOWN,
