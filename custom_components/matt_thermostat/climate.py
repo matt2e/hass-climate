@@ -42,7 +42,10 @@ from homeassistant.helpers.entity_platform import (
     AddConfigEntryEntitiesCallback,
     AddEntitiesCallback,
 )
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import (
+    async_track_state_change_event,
+    async_track_time_interval,
+)
 from homeassistant.helpers.reload import async_setup_reload_service
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
@@ -65,7 +68,7 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-DEFAULT_NAME = "Matt Thermostat"
+DEFAULT_NAME = "Home Thermostat"
 
 CONF_INITIAL_HVAC_MODE = "initial_hvac_mode"
 CONF_TARGET_TEMP = "target_temp"
@@ -115,7 +118,7 @@ async def async_setup_platform(
     async_add_entities: AddEntitiesCallback,
     discovery_info: DiscoveryInfoType | None = None,
 ) -> None:
-    """Set up the matt thermostat platform."""
+    """Set up the parent thermostat platform."""
 
     await async_setup_reload_service(hass, DOMAIN, PLATFORMS)
     await _async_setup_config(
@@ -129,7 +132,7 @@ async def _async_setup_config(
     unique_id: str | None,
     async_add_entities: AddEntitiesCallback | AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up the matt thermostat platform."""
+    """Set up the parent thermostat platform."""
 
     name: str = config[CONF_NAME]
     real_climate_entity_id: str = config[CONF_REAL_CLIMATE]
@@ -153,9 +156,25 @@ async def _async_setup_config(
         raise TypeError("Expected a list of rooms")
     rooms = [Room.from_dict(item) for item in data]
 
+    # Create a map of room name to ChildThermostat for rooms that allow override
+    child_thermostats: dict[str, ChildThermostat] = {
+        room.name: ChildThermostat(
+            hass,
+            name=f"{room.name} Thermostat",
+            min_temp=min_temp,
+            max_temp=max_temp,
+            target_temp=target_temp,
+            precision=precision,
+            target_temperature_step=target_temperature_step,
+            unit=unit,
+            unique_id=f"{unique_id}-{room.name}",
+        )
+        for room in rooms
+        if room.allows_override
+    }
     async_add_entities(
         [
-            MattThermostat(
+            ParentThermostat(
                 hass,
                 name=name,
                 real_climate_entity_id=real_climate_entity_id,
@@ -174,6 +193,7 @@ async def _async_setup_config(
                 unit=unit,
                 unique_id=unique_id,
                 rooms=rooms,
+                child_thermostats=child_thermostats,
             )
         ]
     )
@@ -245,8 +265,8 @@ class Room:
         )
 
 
-class MattThermostat(ClimateEntity, RestoreEntity):
-    """Representation of a Matt Thermostat device."""
+class ParentThermostat(ClimateEntity, RestoreEntity):
+    """Representation of a Parent Thermostat device."""
 
     _attr_should_poll = False
 
@@ -271,10 +291,12 @@ class MattThermostat(ClimateEntity, RestoreEntity):
         unit: UnitOfTemperature,
         unique_id: str | None,
         rooms: list[Room],
+        child_thermostats: dict[str, ChildThermostat],
     ) -> None:
         """Initialize the thermostat."""
         self._attr_name = name
         self._rooms = rooms
+        self._child_thermostats = child_thermostats
         self._real_climate_entity_id = real_climate_entity_id
         self._bedtime_entity_id = bedtime_entity_id
         self._presence_entity_id = presence_entity_id
@@ -322,6 +344,14 @@ class MattThermostat(ClimateEntity, RestoreEntity):
         #         self.hass, lights, self._async_light_changed
         #     )
         # )
+
+        self.async_on_remove(
+            async_track_state_change_event(
+                self.hass,
+                (child.entity_id for child in self._child_thermostats.values()),
+                self._async_child_thermostat_changed,
+            )
+        )
 
         self.async_on_remove(
             async_track_time_interval(
@@ -516,6 +546,11 @@ class MattThermostat(ClimateEntity, RestoreEntity):
     #     except ValueError as ex:
     #         _LOGGER.error("Unable to update from sensor: %s", ex)
 
+    async def _async_child_thermostat_changed(self) -> None:
+        """Called each time a child thermostat changes."""
+        await self._async_control_real_climate()
+        self.async_write_ha_state()
+
     async def _async_poll_for_changes(self, time: datetime | None = None) -> None:
         """Called each time we check for changes."""
         await self._async_control_real_climate()
@@ -524,68 +559,57 @@ class MattThermostat(ClimateEntity, RestoreEntity):
     async def _async_control_real_climate(self, force: bool = False) -> None:
         """Check if we need to turn heating on or off."""
 
-        # --- Helpers ---
-        def get_state(entity_id, default=None):
-            state = self.hass.states.get(entity_id)
-            return state.state if state else default
-
-        def get_attr(entity_id, attr, default=None):
-            state = self.hass.states.get(entity_id)
-            return state.attributes.get(attr, default) if state else default
-
-        async def call_service(domain, service, data):
-            await self.hass.services.async_call(domain, service, data, blocking=False)
-
         async def log(message: str):
-            await call_service(
+            await self.hass.services.async_call(
                 "logbook",
                 "log",
                 {
                     "name": "Custom AirCon",
                     "message": message,
                 },
+                blocking=False,
             )
 
         async with self._temp_lock:
             if not self._active and None not in (self._target_temp,):
                 self._active = True
-                _LOGGER.debug(
-                    (
-                        "Obtained current and target temperature. "
-                        "Matt thermostat active. %s"
-                    ),
-                    self._target_temp,
-                )
 
             if not self._active:
                 return
 
-            presence = get_state(self._presence_entity_id)
-            manual = get_state(self._manual_entity_id)
-            bedtime = get_state(self._bedtime_entity_id) == STATE_ON
+            presence = self.hass.states.get(self._presence_entity_id)
+            manual = self.hass.states.get(self._manual_entity_id)
+            bedtime = self.hass.states.get(self._bedtime_entity_id) == STATE_ON
 
             if manual == STATE_ON:
-                await log("Manual mode active")
                 return
 
             if presence == STATE_OFF or self._hvac_mode == HVACMode.OFF:
-                await call_service(
+                await self.hass.services.async_call(
                     "climate",
                     "set_hvac_mode",
                     {"entity_id": self._real_climate_entity_id, "hvac_mode": "off"},
+                    blocking=False,
                 )
-                await log("No one home")
                 return
 
             # --- Control loop ---
             fan_speed = "off"
-
+            custom_rooms = []
             primary_rooms = []
             secondary_rooms = []
             disabled_rooms = []
+            lowest_primary_current_temp: float | None = None
+            highest_target_temperature = self._target_temp
 
+            # --- Put each room into the correct sub list ---
             for room in self._rooms:
-                # compute real_mode
+                if room.name in self._child_thermostats:
+                    child_thermo = self._child_thermostats[room.name]
+                    if child_thermo.hvac_mode in [HVACMode.HEAT, HVACMode.COOL]:
+                        custom_rooms.append(room)
+                        continue
+
                 if bedtime:
                     mode = room.bedtime_mode
                 else:
@@ -596,7 +620,7 @@ class MattThermostat(ClimateEntity, RestoreEntity):
                     real_mode = RoomMode.SECONDARY
                 elif mode == RoomMode.PRIMARY:
                     if room.light_entity and not bedtime:
-                        if get_state(room.light_entity) in [
+                        if self.hass.states.get(room.light_entity) in [
                             STATE_OFF,
                             STATE_UNAVAILABLE,
                             STATE_UNKNOWN,
@@ -615,17 +639,34 @@ class MattThermostat(ClimateEntity, RestoreEntity):
                     disabled_rooms.append(room)
 
             for room in disabled_rooms:
-                await call_service(
+                await self.hass.services.async_call(
                     "cover",
                     "set_cover_position",
                     {"entity_id": room.cover_entity, "position": 0},
+                    blocking=False,
                 )
-                await log(f"{room.name}: Off")
-                continue
 
-            lowest_primary_current_temp: float | None = None
+            for room in custom_rooms:
+                child_thermo = room.child_thermostat
+
+                target_temp = self._target_temp or self.target_temperature
+                highest_target_temperature = max(
+                    highest_target_temperature, target_temp
+                )
+
+                poss_current_temp = self.hass.states.get(room.sensor_entity)
+                if poss_current_temp is None:
+                    continue
+                current_temp = float(poss_current_temp)
+
+                is_active = await self.async_update_room(
+                    room=room, current_temp=current_temp, target_temp=target_temp
+                )
+                if is_active:
+                    fan_speed = "auto"
+
             for room in primary_rooms:
-                poss_current_temp = get_state(room.sensor_entity)
+                poss_current_temp = self.hass.states.get(room.sensor_entity)
                 if poss_current_temp is None:
                     continue
                 current_temp = float(poss_current_temp)
@@ -635,127 +676,315 @@ class MattThermostat(ClimateEntity, RestoreEntity):
                 ):
                     lowest_primary_current_temp = current_temp
 
-                diff = self._target_temp - current_temp
-                cover_pos = int(get_attr(room.cover_entity, "current_position", 0))
-
-                if diff > self._cold_tolerance:
+                is_active = await self.async_update_room(
+                    room=room, current_temp=current_temp, target_temp=self._target_temp
+                )
+                if is_active:
                     fan_speed = "auto"
-                    if cover_pos < 100:
-                        await call_service(
-                            "cover",
-                            "set_cover_position",
-                            {"entity_id": room.cover_entity, "position": 100},
-                        )
-                        await log(f"{room.name}: 100% (outside of range)")
-                elif (
-                    -1 * self._hot_tolerance < diff <= self._cold_tolerance
-                    and cover_pos > 0
-                ):
-                    fan_speed = "auto"
-                    if cover_pos < 100:
-                        await call_service(
-                            "cover",
-                            "set_cover_position",
-                            {"entity_id": room.cover_entity, "position": 100},
-                        )
-                        await log(f"{room.name}: 100% (goldilocks zone -> warming up)")
-
-                elif diff <= -1 * self._hot_tolerance:
-                    await log(f"{room.name}: Reached target temperature + buffer")
-                    if cover_pos > 0:
-                        await call_service(
-                            "cover",
-                            "set_cover_position",
-                            {"entity_id": room.cover_entity, "position": 0},
-                        )
-
-                else:
-                    await log(f"{room.name}: Goldilocks zone -> cooling down")
 
             # --- Apply AC mode, temp, and fan speed ---
-            await call_service(
+            await self.hass.services.async_call(
                 "climate",
                 "set_temperature",
                 {
                     "entity_id": self._real_climate_entity_id,
-                    ATTR_TEMPERATURE: math.ceil(self._target_temp),
+                    ATTR_TEMPERATURE: math.ceil(highest_target_temperature),
                 },
+                blocking=False,
             )
 
             if lowest_primary_current_temp is not None:
                 self._attr_current_temperature = lowest_primary_current_temp
 
             if fan_speed == "off":
-                await call_service(
-                    "climate", "turn_off", {"entity_id": self._real_climate_entity_id}
+                await self.hass.services.async_call(
+                    "climate",
+                    "turn_off",
+                    {"entity_id": self._real_climate_entity_id},
+                    blocking=False,
                 )
-                await log("Primary rooms are satisfied")
-                return
+            else:
+                await self.hass.services.async_call(
+                    "climate",
+                    "set_fan_mode",
+                    {"entity_id": self._real_climate_entity_id, "fan_mode": fan_speed},
+                    blocking=False,
+                )
+                await self.hass.services.async_call(
+                    "climate",
+                    "set_hvac_mode",
+                    {"entity_id": self._real_climate_entity_id, "hvac_mode": "heat"},
+                    blocking=False,
+                )
 
-            await call_service(
-                "climate",
-                "set_fan_mode",
-                {"entity_id": self._real_climate_entity_id, "fan_mode": fan_speed},
+                # --- AC is on so activate secondary rooms as needed ---
+                await self.async_update_secondary_rooms(secondary_rooms)
+
+            await self.async_update_child_thermostats()
+
+    async def async_update_secondary_rooms(self, secondary_rooms: list[Room]) -> None:
+        """Updates secondary rooms and is called when other rooms are needing the air con on."""
+        target_temp_secondary = max(self._target_temp - 2, 16)
+
+        for room in secondary_rooms:
+            poss_current_temp = self.hass.states.get(room.sensor_entity)
+            if poss_current_temp is None:
+                continue
+            current_temp = float(poss_current_temp)
+
+            await self.async_update_room(
+                room=room, current_temp=current_temp, target_temp=target_temp_secondary
             )
-            await call_service(
-                "climate",
-                "set_hvac_mode",
-                {"entity_id": self._real_climate_entity_id, "hvac_mode": "heat"},
+
+    async def async_update_room(
+        self, room: Room, current_temp: float, target_temp: float
+    ) -> bool:
+        """Update the target temperature for a room."""
+        diff = self._target_temp - current_temp
+        cover_state = self.hass.states.get(room.cover_entity)
+        cover_pos = (
+            cover_state.attributes.get("current_position", 0) if cover_state else 0
+        )
+
+        if diff > self._cold_tolerance or (
+            -1 * self._hot_tolerance < diff <= self._cold_tolerance and cover_pos > 0
+        ):
+            if cover_pos < 100:
+                await self.hass.services.async_call(
+                    "cover",
+                    "set_cover_position",
+                    {"entity_id": room.cover_entity, "position": 100},
+                    blocking=False,
+                )
+                # await log(f"{room.name}: 100% (goldilocks zone -> warming up)")
+            return True
+        if diff <= -1 * self._hot_tolerance:
+            # await log(f"{room.name}: Reached target temperature + buffer")
+            if cover_pos > 0:
+                await self.hass.services.async_call(
+                    "cover",
+                    "set_cover_position",
+                    {"entity_id": room.cover_entity, "position": 0},
+                    blocking=False,
+                )
+            # await log(f"{room.name}: Goldilocks zone -> cooling down")
+            return False
+
+        return False
+
+    async def async_update_child_thermostats(self):
+        """Update child thermostat state."""
+        for room in self._rooms:
+            child_thermo = room.child_thermostat
+            if child_thermo is None:
+                continue
+
+            poss_current_temp = self.hass.states.get(room.sensor_entity)
+            if poss_current_temp is None:
+                continue
+            current_temp = float(poss_current_temp)
+            cover_state = self.hass.states.get(room.cover_entity)
+            cover_pos = (
+                cover_state.attributes.get("current_position", 0) if cover_state else 0
+            )
+            if cover_pos == 0 and self.hvac_action == HVACAction.OFF:
+                child_action = HVACAction.OFF
+            elif cover_pos == 0:
+                child_action = HVACAction.IDLE
+            else:
+                child_action = self.hvac_action
+
+            await child_thermo.async_set_child_state(
+                parent_target_temperature=self._target_temperature,
+                current_temperature=current_temp,
+                hvac_action=child_action,
             )
 
-            # --- AC is on so activate secondary rooms as needed ---
-            target_temp_secondary = max(self._target_temp - 2, 16)
+    @property
+    def _is_device_active(self) -> bool | None:
+        """If the toggleable device is currently active."""
 
-            for room in secondary_rooms:
-                poss_current_temp = get_state(room.sensor_entity)
-                if poss_current_temp is None:
-                    continue
-                current_temp = float(poss_current_temp)
+        climate_state = self.hass.states.get(self._real_climate_entity_id)
+        if climate_state is None:
+            return False
 
-                diff = target_temp_secondary - current_temp
-                cover_pos = int(get_attr(room.cover_entity, "current_position", 0))
+        real_hvac_action = climate_state.attributes.get("hvac_action")
+        if real_hvac_action in (HVACAction.IDLE, HVACAction.OFF):
+            return False
 
-                # --- Actions per secondary room ---
-                if diff > 1.5:
-                    if cover_pos < 100:
-                        await call_service(
-                            "cover",
-                            "set_cover_position",
-                            {"entity_id": room.cover_entity, "position": 100},
-                        )
-                        await log(f"{room.name}: 100% (diff > 1.5) (secondary)")
-                elif diff > 0.5:
-                    if cover_pos < 100:
-                        await call_service(
-                            "cover",
-                            "set_cover_position",
-                            {"entity_id": room.cover_entity, "position": 100},
-                        )
-                        await log(f"{room.name}: 100% (diff > 0.5) (secondary)")
-                elif -0.5 < diff <= 0.5 and cover_pos > 0:
-                    if cover_pos < 100:
-                        await call_service(
-                            "cover",
-                            "set_cover_position",
-                            {"entity_id": room.cover_entity, "position": 100},
-                        )
-                        await log(
-                            f"{room.name}: 100% (goldilocks zone -> warming up) (secondary)"
-                        )
-                elif diff <= -0.5:
-                    if cover_pos > 0:
-                        await call_service(
-                            "cover",
-                            "set_cover_position",
-                            {"entity_id": room.cover_entity, "position": 0},
-                        )
-                        await log(
-                            f"{room.name}: Reached target temperature + buffer (secondary)"
-                        )
-                else:
-                    await log(
-                        f"{room.name}: Goldilocks zone -> cooling down (secondary)"
-                    )
+        return True
+
+
+class ChildThermostat(ClimateEntity, RestoreEntity):
+    """Representation of a Child Thermostat device."""
+
+    _attr_should_poll = False
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        *,
+        name: str,
+        min_temp: float | None,
+        max_temp: float | None,
+        target_temp: float | None,
+        precision: float | None,
+        target_temperature_step: float | None,
+        unit: UnitOfTemperature,
+        unique_id: str | None,
+    ) -> None:
+        """Initialize the thermostat."""
+        self._attr_name = name
+        self._hvac_mode = HVACMode.OFF
+        self._hvac_action = HVACAction.OFF
+        self._saved_target_temp = target_temp
+        self._temp_precision = precision
+        self._temp_target_temperature_step = target_temperature_step
+        self._attr_hvac_modes = [HVACMode.AUTO, HVACMode.COOL, HVACMode.HEAT]
+        self._active = False
+        self._min_temp = min_temp
+        self._max_temp = max_temp
+        self._attr_preset_mode = PRESET_NONE
+        self._target_temp = target_temp
+        self._attr_temperature_unit = unit
+        self._attr_unique_id = unique_id
+        self._attr_supported_features = (
+            ClimateEntityFeature.TARGET_TEMPERATURE
+            | ClimateEntityFeature.TURN_OFF
+            | ClimateEntityFeature.TURN_ON
+        )
+        self._attr_preset_modes = [PRESET_NONE]
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity about to be added."""
+        await super().async_added_to_hass()
+
+        self.async_on_remove(
+            async_track_time_interval(
+                self.hass,
+                self._async_poll_for_changes,
+                timedelta(seconds=30),
+            )
+        )
+
+        @callback
+        def _async_startup(_: Event | None = None) -> None:
+            """Init on startup."""
+
+        if self.hass.state is CoreState.running:
+            _async_startup()
+        else:
+            self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_START, _async_startup)
+
+        # Set default state to off
+        if not self._hvac_mode:
+            self._hvac_mode = HVACMode.OFF
+
+    @property
+    def precision(self) -> float:
+        """Return the precision of the system."""
+        if self._temp_precision is not None:
+            return self._temp_precision
+        return super().precision
+
+    @property
+    def target_temperature_step(self) -> float:
+        """Return the supported step of target temperature."""
+        if self._temp_target_temperature_step is not None:
+            return self._temp_target_temperature_step
+        # if a target_temperature_step is not defined, fallback to equal the precision
+        return self.precision
+
+    @property
+    def hvac_mode(self) -> HVACMode | None:
+        """Return current operation."""
+        return self._hvac_mode
+
+    @property
+    def hvac_action(self) -> HVACAction:
+        """Return the current running hvac operation if supported.
+
+        Need to be one of CURRENT_HVAC_*.
+        """
+        if self._hvac_mode == HVACMode.OFF:
+            return HVACAction.OFF
+        if not self._is_device_active:
+            return HVACAction.IDLE
+        if self._hvac_mode == HVACMode.COOL:
+            return HVACAction.COOLING
+        if self._hvac_mode == HVACMode.HEAT:
+            return HVACAction.HEATING
+        return HVACAction.IDLE
+
+    @property
+    def target_temperature(self) -> float | None:
+        """Return the temperature we try to reach."""
+        return self._target_temp
+
+    async def async_set_child_state(
+        self,
+        parent_target_temperature: float,
+        current_temperature: float,
+        hvac_action: HVACAction,
+    ) -> None:
+        """Set current state for child thermometer."""
+        if (
+            self._hvac_action == hvac_action
+            and self._attr_current_temperature == current_temperature
+            and (
+                self._hvac_mode in [HVACMode.HEAT, HVACMode.COOL]
+                or self._target_temp == parent_target_temperature
+            )
+        ):
+            # early exit as nothing has changed. This possibly avoids infinite loop as parent thermostat watches this state
+            return
+
+        if self._hvac_mode not in [HVACMode.HEAT, HVACMode.COOL]:
+            self._target_temp = parent_target_temperature
+        self._attr_current_temperature = current_temperature
+        self._hvac_action = hvac_action
+        self.async_write_ha_state()
+
+    async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
+        """Set hvac mode."""
+        if hvac_mode == HVACMode.HEAT:
+            self._hvac_mode = HVACMode.HEAT
+        elif hvac_mode == HVACMode.COOL:
+            self._hvac_mode = HVACMode.COOL
+        elif hvac_mode == HVACMode.OFF:
+            self._hvac_mode = HVACMode.OFF
+        else:
+            _LOGGER.error("Unrecognized hvac mode: %s", hvac_mode)
+            return
+        await self._async_control_real_climate(force=True)
+        # Ensure we update the current operation after changing the mode
+        self.async_write_ha_state()
+
+    async def async_set_temperature(self, **kwargs: Any) -> None:
+        """Set new target temperature."""
+        if (temperature := kwargs.get(ATTR_TEMPERATURE)) is None:
+            return
+        self._target_temp = temperature
+        await self._async_control_real_climate(force=True)
+        self.async_write_ha_state()
+
+    @property
+    def min_temp(self) -> float:
+        """Return the minimum temperature."""
+        if self._min_temp is not None:
+            return self._min_temp
+
+        # get default temp from super class
+        return super().min_temp
+
+    @property
+    def max_temp(self) -> float:
+        """Return the maximum temperature."""
+        if self._max_temp is not None:
+            return self._max_temp
+
+        # Get default temp from super class
+        return super().max_temp
 
     @property
     def _is_device_active(self) -> bool | None:
