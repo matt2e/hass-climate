@@ -173,42 +173,32 @@ async def _async_setup_config(
         if room.allows_override
     }
 
-    for child_thermo in list(child_thermostats.values()):
-        if child_thermo is None:
-            child_thermo.crash_please()
+    # add child thermostats, which gives them each an entity id
+    async_add_entities(list(child_thermostats.values()))
 
-    if len(child_thermostats) == 0:
-        child_thermostats.crash_please()
-        return
-
-    # add child thermostats and wait, which gives them each an entity id
-    await async_add_entities(list(child_thermostats.values()))
-
-    async_add_entities(
-        [
-            ParentThermostat(
-                hass,
-                name=name,
-                real_climate_entity_id=real_climate_entity_id,
-                presence_entity_id=presence_entity_id,
-                bedtime_entity_id=bedtime_entity_id,
-                manual_entity_id=manual_entity_id,
-                min_temp=min_temp,
-                max_temp=max_temp,
-                target_temp=target_temp,
-                min_cycle_duration=min_cycle_duration,
-                cold_tolerance=cold_tolerance,
-                hot_tolerance=hot_tolerance,
-                initial_hvac_mode=initial_hvac_mode,
-                precision=precision,
-                target_temperature_step=target_temperature_step,
-                unit=unit,
-                unique_id=unique_id,
-                rooms=rooms,
-                child_thermostats=child_thermostats,
-            )
-        ]
+    parent = ParentThermostat(
+        hass,
+        name=name,
+        real_climate_entity_id=real_climate_entity_id,
+        presence_entity_id=presence_entity_id,
+        bedtime_entity_id=bedtime_entity_id,
+        manual_entity_id=manual_entity_id,
+        min_temp=min_temp,
+        max_temp=max_temp,
+        target_temp=target_temp,
+        min_cycle_duration=min_cycle_duration,
+        cold_tolerance=cold_tolerance,
+        hot_tolerance=hot_tolerance,
+        initial_hvac_mode=initial_hvac_mode,
+        precision=precision,
+        target_temperature_step=target_temperature_step,
+        unit=unit,
+        unique_id=unique_id,
+        rooms=rooms,
+        child_thermostats=child_thermostats,
     )
+
+    async_add_entities([parent])
 
 
 class RoomMode(str, Enum):
