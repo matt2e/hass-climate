@@ -647,10 +647,10 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     highest_target_temperature, target_temp
                 )
 
-                poss_current_temp = self.hass.states.get(room.sensor_entity)
-                if poss_current_temp is None:
+                sensor_state = self.hass.states.get(room.cover_entity)
+                if sensor_state is None:
                     continue
-                current_temp = float(poss_current_temp)
+                current_temp = float(sensor_state.state)
 
                 is_active = await self.async_update_room(
                     room=room, current_temp=current_temp, target_temp=target_temp
@@ -659,10 +659,10 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     fan_speed = "auto"
 
             for room in primary_rooms:
-                poss_current_temp = self.hass.states.get(room.sensor_entity)
-                if poss_current_temp is None:
+                sensor_state = self.hass.states.get(room.cover_entity)
+                if sensor_state is None:
                     continue
-                current_temp = float(poss_current_temp)
+                current_temp = float(sensor_state.state)
                 if (
                     lowest_primary_current_temp is None
                     or current_temp < lowest_primary_current_temp
@@ -720,10 +720,10 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         target_temp_secondary = max(self._target_temp - 2, 16)
 
         for room in secondary_rooms:
-            poss_current_temp = self.hass.states.get(room.sensor_entity)
-            if poss_current_temp is None:
+            sensor_state = self.hass.states.get(room.cover_entity)
+            if sensor_state is None:
                 continue
-            current_temp = float(poss_current_temp)
+            current_temp = float(sensor_state.state)
 
             await self.async_update_room(
                 room=room, current_temp=current_temp, target_temp=target_temp_secondary
@@ -772,10 +772,10 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             if child_thermo is None:
                 continue
 
-            poss_current_temp = self.hass.states.get(room.sensor_entity)
-            if poss_current_temp is None:
+            sensor_state = self.hass.states.get(room.cover_entity)
+            if sensor_state is None:
                 continue
-            current_temp = float(poss_current_temp)
+            current_temp = float(sensor_state.state)
             cover_state = self.hass.states.get(room.cover_entity)
             cover_pos = (
                 cover_state.attributes.get("current_position", 0) if cover_state else 0
