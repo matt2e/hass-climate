@@ -749,10 +749,8 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     {"entity_id": room.cover_entity, "position": 100},
                     blocking=False,
                 )
-                # await log(f"{room.name}: 100% (goldilocks zone -> warming up)")
             return True
         if diff <= -1 * self._hot_tolerance:
-            # await log(f"{room.name}: Reached target temperature + buffer")
             if cover_pos > 0:
                 await self.hass.services.async_call(
                     "cover",
@@ -760,7 +758,6 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     {"entity_id": room.cover_entity, "position": 0},
                     blocking=False,
                 )
-            # await log(f"{room.name}: Goldilocks zone -> cooling down")
             return False
 
         return False
