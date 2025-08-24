@@ -950,7 +950,6 @@ class ChildThermostat(ClimateEntity, RestoreEntity):
         self.async_write_ha_state()
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
-        await self._async_control_real_climate(force=True)
         """Set new target temperature."""
         if (temperature := kwargs.get(ATTR_TEMPERATURE)) is None:
             return
@@ -959,7 +958,6 @@ class ChildThermostat(ClimateEntity, RestoreEntity):
 
     @property
     def min_temp(self) -> float:
-        await self._async_control_real_climate(force=True)
         """Return the minimum temperature."""
         if self._min_temp is not None:
             return self._min_temp
