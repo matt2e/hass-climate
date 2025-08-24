@@ -173,6 +173,14 @@ async def _async_setup_config(
         if room.allows_override
     }
 
+    for child_thermo in list(child_thermostats.values()):
+        if child_thermo is None:
+            child_thermo.crash_please()
+
+    if len(child_thermostats) == 0:
+        child_thermostats.crash_please()
+        return
+
     # add child thermostats and wait, which gives them each an entity id
     await async_add_entities(list(child_thermostats.values()))
 
