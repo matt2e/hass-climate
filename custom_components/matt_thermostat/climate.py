@@ -338,15 +338,6 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         #     )
         # )
 
-        # lights = [
-        #     room.light_entity for room in self._rooms if room.light_entity is not None
-        # ]
-        # self.async_on_remove(
-        #     async_track_state_change_event(
-        #         self.hass, lights, self._async_light_changed
-        #     )
-        # )
-
         self.async_on_remove(
             async_track_state_change_event(
                 self.hass,
