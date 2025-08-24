@@ -595,7 +595,7 @@ class MattThermostat(ClimateEntity, RestoreEntity):
                 if mode == RoomMode.SECONDARY:
                     real_mode = RoomMode.SECONDARY
                 elif mode == RoomMode.PRIMARY:
-                    if room.light_entity:
+                    if room.light_entity and not bedtime:
                         if get_state(room.light_entity) in [
                             STATE_OFF,
                             STATE_UNAVAILABLE,
