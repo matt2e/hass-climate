@@ -744,12 +744,12 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             room_state.reached_max_at = datetime.now()
             room_state.is_satisfied = True
 
-        if diff < -0.5 * self._hot_tolerance:
+        if diff > -0.5 * self._hot_tolerance:
             desired_cover_pos = 100
         elif diff <= -1 * self._hot_tolerance:
             desired_cover_pos = 0
-        elif self._room_states[room.name].reached_target_at is not None and (
-            datetime.now() - self._room_states[room.name].reached_target_at
+        elif room_state.reached_target_at is not None and (
+            datetime.now() - room_state.reached_target_at
         ) > timedelta(minutes=5):
             desired_cover_pos = 50
         else:
