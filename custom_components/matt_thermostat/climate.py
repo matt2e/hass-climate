@@ -848,20 +848,14 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             satisfied = "✓" if state.is_satisfied else "✗"
 
             # light
-            light = "💡" if state.light_on else ""
+            light = "◉" if state.light_on else "◎"
 
-            # when was last reached (pick the most recent)
-            reached_times = [
-                t
-                for t in [
-                    state.reached_min_at,
-                    state.reached_target_at,
-                    state.reached_max_at,
-                ]
-                if t
-            ]
-            last_reached = max(reached_times) if reached_times else None
-            last_str = f"@{(now - last_reached).seconds // 60}m" if last_reached else ""
+            # when was target reached
+            last_str = (
+                f"@{(now - state.reached_target_at).seconds // 60}m"
+                if state.reached_target_at
+                else ""
+            )
 
             summaries.append(
                 f"{room.name}: {mode} {satisfied}{light} {last_str}".strip()
@@ -870,7 +864,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         await self.hass.services.async_call(
             input_text.DOMAIN,
             "set_value",
-            {"entity_id": self._output_entity_id, "value": "\n".join(summaries)},
+            {"entity_id": self._output_entity_id, "value": "\\n".join(summaries)},
             blocking=False,
         )
 
