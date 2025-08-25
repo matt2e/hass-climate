@@ -221,6 +221,7 @@ class RoomState:
     """Room states."""
 
     mode: RoomMode = RoomMode.DISABLED
+    cover_pos: int = 0
     reached_min_at: datetime | None = None
     reached_target_at: datetime | None = None
     reached_max_at: datetime | None = None
@@ -801,6 +802,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             desired_cover_pos = 100
 
         if desired_cover_pos != cover_pos:
+            room_state.cover_pos = desired_cover_pos
             await self.hass.services.async_call(
                 "cover",
                 "set_cover_position",
@@ -833,7 +835,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         if not is_on:
             return None
 
-        if overflow_room_state.reached_target_at is None and below_target_count > 1:
+        if overflow_room_state.cover_pos == 100:
             # No fear of medium being too strong
             return "medium"
 
