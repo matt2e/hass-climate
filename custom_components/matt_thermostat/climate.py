@@ -142,7 +142,7 @@ async def _async_setup_config(
     bedtime_entity_id: str = config[CONF_BEDTIME]
     presence_entity_id: str = config[CONF_PRESENCE]
     manual_entity_id: str = config[CONF_MANUAL]
-    output_entity_id: str = config[CONF_OUTPUT_TEXT]
+    output_entity_id: str | None = config.get(CONF_OUTPUT_TEXT)
     min_temp: float | None = config.get(CONF_MIN_TEMP)
     max_temp: float | None = config.get(CONF_MAX_TEMP)
     target_temp: float | None = config.get(CONF_TARGET_TEMP)
