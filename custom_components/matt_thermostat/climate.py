@@ -635,7 +635,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 if device_active is not None and not device_active:
                     # we are turning AC on, so mark all rooms as not satisfied
                     for room_state in self._room_states.values():
-                        room_state.satisfied = False
+                        room_state.is_satisfied = False
 
                 await self.hass.services.async_call(
                     "climate",
