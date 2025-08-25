@@ -348,7 +348,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             | ClimateEntityFeature.TURN_ON
         )
         self._attr_preset_modes = [PRESET_NONE]
-        self._room_states = dict[str, RoomState] = {
+        self._room_states: dict[str, RoomState] = {
             room.name: RoomState() for room in rooms
         }
 
