@@ -14,6 +14,7 @@ from typing import Any
 
 import voluptuous as vol
 
+from homeassistant.components import input_text
 from homeassistant.components.climate import (
     ATTR_PRESET_MODE,
     PLATFORM_SCHEMA as CLIMATE_PLATFORM_SCHEMA,
@@ -58,6 +59,7 @@ from .const import (
     CONF_MAX_TEMP,
     CONF_MIN_DUR,
     CONF_MIN_TEMP,
+    CONF_OUTPUT_TEXT,
     CONF_PRESENCE,
     CONF_REAL_CLIMATE,
     CONF_ROOMS,
@@ -87,6 +89,7 @@ PLATFORM_SCHEMA_COMMON = vol.Schema(
         vol.Optional(CONF_COLD_TOLERANCE, default=DEFAULT_TOLERANCE): vol.Coerce(float),
         vol.Optional(CONF_HOT_TOLERANCE, default=DEFAULT_TOLERANCE): vol.Coerce(float),
         vol.Optional(CONF_TARGET_TEMP): vol.Coerce(float),
+        vol.Optional(CONF_OUTPUT_TEXT): cv.string,
         vol.Optional(CONF_INITIAL_HVAC_MODE): vol.In(
             [HVACMode.COOL, HVACMode.HEAT, HVACMode.OFF]
         ),
@@ -139,6 +142,7 @@ async def _async_setup_config(
     bedtime_entity_id: str = config[CONF_BEDTIME]
     presence_entity_id: str = config[CONF_PRESENCE]
     manual_entity_id: str = config[CONF_MANUAL]
+    output_entity_id: str = config[CONF_OUTPUT_TEXT]
     min_temp: float | None = config.get(CONF_MIN_TEMP)
     max_temp: float | None = config.get(CONF_MAX_TEMP)
     target_temp: float | None = config.get(CONF_TARGET_TEMP)
@@ -183,6 +187,7 @@ async def _async_setup_config(
         presence_entity_id=presence_entity_id,
         bedtime_entity_id=bedtime_entity_id,
         manual_entity_id=manual_entity_id,
+        output_entity_id=output_entity_id,
         min_temp=min_temp,
         max_temp=max_temp,
         target_temp=target_temp,
@@ -304,6 +309,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         presence_entity_id: str,
         bedtime_entity_id: str,
         manual_entity_id: str,
+        output_entity_id: str | None,
         min_temp: float | None,
         max_temp: float | None,
         target_temp: float | None,
@@ -326,6 +332,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         self._bedtime_entity_id = bedtime_entity_id
         self._presence_entity_id = presence_entity_id
         self._manual_entity_id = manual_entity_id
+        self._output_entity_id = output_entity_id
         self._min_cycle_duration = min_cycle_duration
         self._cold_tolerance = cold_tolerance
         self._hot_tolerance = hot_tolerance
@@ -708,7 +715,8 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 # --- AC is on so activate secondary rooms as needed ---
                 await self.async_update_secondary_rooms(secondary_rooms)
 
-            await self.async_update_child_thermostats()
+            await self._async_update_child_thermostats()
+            await self._async_update_output()
 
     def _reset_all_room_states(self) -> None:
         """Reset all room states to their initial values."""
@@ -859,7 +867,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
 
         return "auto"
 
-    async def async_update_child_thermostats(self):
+    async def _async_update_child_thermostats(self):
         """Update child thermostat state."""
         for room in self._rooms:
             child_thermo = self._child_thermostats.get(room.name)
@@ -886,6 +894,53 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 current_temperature=current_temp,
                 hvac_action=child_action,
             )
+
+    async def _async_update_output(self) -> None:
+        """Update the output entity state."""
+        if self._output_entity_id is None:
+            return
+
+        summaries = []
+        now = datetime.now()
+
+        for room in self._rooms:
+            state = self._room_states.get(room.name)
+            if not state:
+                summaries.append(f"{room.name}: (no state)")
+                continue
+
+            # mode
+            mode = state.mode.value if hasattr(state.mode, "value") else str(state.mode)
+
+            # satisfied
+            satisfied = "✓" if state.is_satisfied else "✗"
+
+            # light
+            light = "💡" if state.light_on else ""
+
+            # when was last reached (pick the most recent)
+            reached_times = [
+                t
+                for t in [
+                    state.reached_min_at,
+                    state.reached_target_at,
+                    state.reached_max_at,
+                ]
+                if t
+            ]
+            last_reached = max(reached_times) if reached_times else None
+            last_str = f"@{(now - last_reached).seconds // 60}m" if last_reached else ""
+
+            summaries.append(
+                f"{room.name}: {mode} {satisfied}{light} {last_str}".strip()
+            )
+
+        await self.hass.services.async_call(
+            input_text.DOMAIN,
+            "set_value",
+            {"entity_id": self._output_entity_id, "value": "\n".join(summaries)},
+            blocking=False,
+        )
 
     @property
     def _is_device_active(self) -> bool | None:

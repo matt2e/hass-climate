@@ -7,7 +7,7 @@ from typing import Any, cast
 
 import voluptuous as vol
 
-from homeassistant.components import climate, input_boolean
+from homeassistant.components import climate, input_boolean, input_text
 from homeassistant.const import CONF_NAME, DEGREE
 from homeassistant.helpers import selector
 from homeassistant.helpers.schema_config_entry_flow import (
@@ -23,6 +23,7 @@ from .const import (
     CONF_MAX_TEMP,
     CONF_MIN_DUR,
     CONF_MIN_TEMP,
+    CONF_OUTPUT_TEXT,
     CONF_PRESENCE,
     CONF_REAL_CLIMATE,
     CONF_ROOMS,
@@ -72,6 +73,9 @@ OPTIONS_SCHEMA = {
     ),
     vol.Required(CONF_ROOMS): selector.TextSelector(
         selector.TextSelectorConfig(multiline=True)
+    ),
+    vol.Optional(CONF_OUTPUT_TEXT, default=""): selector.EntitySelectorConfig(
+        domain=[input_text.DOMAIN]
     ),
 }
 

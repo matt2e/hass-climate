@@ -16,4 +16,5 @@ CONF_MAX_TEMP = "max_temp"
 CONF_MIN_TEMP = "min_temp"
 CONF_MIN_DUR = "min_cycle_duration"
 CONF_ROOMS = "rooms"
-DEFAULT_TOLERANCE = 0.3
+DEFAULT_TOLERANCE = 0.4
+CONF_OUTPUT_TEXT = "output_text"
