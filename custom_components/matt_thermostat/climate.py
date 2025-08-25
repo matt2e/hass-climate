@@ -686,7 +686,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     blocking=False,
                 )
             else:
-                device_active = self._is_device_active()
+                device_active = self._is_device_active
                 if device_active is not None and not device_active:
                     # we are turning AC on, so mark all rooms as not satisfied
                     for room_state in self._room_states.values():
