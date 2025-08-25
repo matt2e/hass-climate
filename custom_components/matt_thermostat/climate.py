@@ -703,8 +703,8 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         if mode == RoomMode.SECONDARY:
             return RoomMode.SECONDARY
         if mode == RoomMode.PRIMARY:
+            room_state = self._room_states[room.name]
             if room.light_entity:
-                room_state = self._room_states[room.name]
                 if self.hass.states.get(room.light_entity).state in [
                     STATE_OFF,
                     STATE_UNAVAILABLE,
@@ -713,7 +713,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     room_state.raw_light_on_at = None
                     if room_state.raw_light_off_at is None:
                         room_state.raw_light_off_at = datetime.now()
-                    elif room_state.raw_light_off_at > datetime.now() - timedelta(
+                    elif room_state.raw_light_off_at <= datetime.now() - timedelta(
                         minutes=2
                     ):
                         room_state.light_on = False
@@ -721,7 +721,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     room_state.raw_light_off_at = None
                     if room_state.raw_light_on_at is None:
                         room_state.raw_light_on_at = datetime.now()
-                    elif room_state.raw_light_on_at > datetime.now() - timedelta(
+                    elif room_state.raw_light_on_at <= datetime.now() - timedelta(
                         minutes=2
                     ):
                         room_state.light_on = True
