@@ -801,8 +801,8 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         else:
             desired_cover_pos = 100
 
+        room_state.cover_pos = desired_cover_pos
         if desired_cover_pos != cover_pos:
-            room_state.cover_pos = desired_cover_pos
             await self.hass.services.async_call(
                 "cover",
                 "set_cover_position",
