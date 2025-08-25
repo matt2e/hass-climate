@@ -699,10 +699,12 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
 
         return RoomMode.DISABLED
 
+    def _target_secondary_temp(self) -> float | None:
+        return max(self._target_temp - 2, 16)
+
     async def async_update_secondary_rooms(self, secondary_rooms: list[Room]) -> None:
         """Updates secondary rooms and is called when other rooms are needing the air con on."""
-        target_temp_secondary = max(self._target_temp - 2, 16)
-
+        target_temp_secondary = self._target_secondary_temp()
         for room in secondary_rooms:
             sensor_state = self.hass.states.get(room.sensor_entity)
             if sensor_state is None:
@@ -822,8 +824,13 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             else:
                 child_action = self.hvac_action
 
+            if self._room_states[room.name].mode == RoomMode.SECONDARY:
+                parent_target_temperature = self._target_secondary_temp()
+            else:
+                parent_target_temperature = self._target_temp
+
             await child_thermo.async_set_child_state(
-                parent_target_temperature=self._target_temp,
+                parent_target_temperature=parent_target_temperature,
                 current_temperature=current_temp,
                 hvac_action=child_action,
             )
