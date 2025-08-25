@@ -363,14 +363,6 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         """Run when entity about to be added."""
         await super().async_added_to_hass()
 
-        # Add listeners
-        # sensors = [room.sensor_entity for room in self._rooms]
-        # self.async_on_remove(
-        #     async_track_state_change_event(
-        #         self.hass, sensors, self._async_sensor_changed
-        #     )
-        # )
-
         self.async_on_remove(
             async_track_state_change_event(
                 self.hass,
@@ -390,21 +382,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         @callback
         def _async_startup(_: Event | None = None) -> None:
             """Init on startup."""
-            # sensor_state = self.hass.states.get(self.sensor_entity_id)
-            # if sensor_state and sensor_state.state not in (
-            #     STATE_UNAVAILABLE,
-            #     STATE_UNKNOWN,
-            # ):
-            #     self._async_update_temp(sensor_state)
-            #     self.async_write_ha_state()
-            # switch_state = self.hass.states.get(self.heater_entity_id)
-            # if switch_state and switch_state.state not in (
-            #     STATE_UNAVAILABLE,
-            #     STATE_UNKNOWN,
-            # ):
-            #     self.hass.async_create_task(
-            #         self._check_switch_initial_state(), eager_start=True
-            #     )
+            # original code went here...
 
         if self.hass.state is CoreState.running:
             _async_startup()
@@ -525,52 +503,6 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
 
         # Get default temp from super class
         return super().max_temp
-
-    # async def _async_sensor_changed(self, event: Event[EventStateChangedData]) -> None:
-    #     """Handle temperature changes."""
-    #     new_state = event.data["new_state"]
-    #     if new_state is None or new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
-    #         return
-
-    #     self._async_update_temp(new_state)
-    #     await self._async_control_heating()
-    #     self.async_write_ha_state()
-
-    # async def _check_switch_initial_state(self) -> None:
-    #     """Prevent the device from keep running if HVACMode.OFF."""
-    #     if self._hvac_mode == HVACMode.OFF and self._is_device_active:
-    #         _LOGGER.warning(
-    #             (
-    #                 "The climate mode is OFF, but the switch device is ON. Turning off"
-    #                 " device %s"
-    #             ),
-    #             self.heater_entity_id,
-    #         )
-    #         await self._async_heater_turn_off()
-
-    # @callback
-    # def _async_switch_changed(self, event: Event[EventStateChangedData]) -> None:
-    #     """Handle heater switch state changes."""
-    #     new_state = event.data["new_state"]
-    #     old_state = event.data["old_state"]
-    #     if new_state is None:
-    #         return
-    #     if old_state is None:
-    #         self.hass.async_create_task(
-    #             self._check_switch_initial_state(), eager_start=True
-    #         )
-    #     self.async_write_ha_state()
-
-    # @callback
-    # def _async_update_temp(self, state: State) -> None:
-    #     """Update thermostat with latest state from sensor."""
-    #     try:
-    #         cur_temp = float(state.state)
-    #         if not math.isfinite(cur_temp):
-    #             raise ValueError(f"Sensor has illegal state {state.state}")
-    #         self._cur_temp = cur_temp
-    #     except ValueError as ex:
-    #         _LOGGER.error("Unable to update from sensor: %s", ex)
 
     async def _async_child_thermostat_changed(self, event: Any) -> None:
         """Called each time a child thermostat changes."""
