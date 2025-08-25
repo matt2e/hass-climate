@@ -286,6 +286,7 @@ class Room:
             standard_mode=mode,
             bedtime_mode=bedtime_mode,
             allows_override=bool(data.get("allows_override", False)),
+            is_overflow=bool(data.get("is_overflow", False)),
         )
 
 
