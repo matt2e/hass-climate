@@ -74,8 +74,8 @@ OPTIONS_SCHEMA = {
     vol.Required(CONF_ROOMS): selector.TextSelector(
         selector.TextSelectorConfig(multiline=True)
     ),
-    vol.Optional(CONF_OUTPUT_TEXT, default=""): selector.EntitySelectorConfig(
-        domain=[input_text.DOMAIN]
+    vol.Optional(CONF_OUTPUT_TEXT): selector.EntitySelector(
+        selector.EntitySelectorConfig(domain=[input_text.DOMAIN])
     ),
 }
 
