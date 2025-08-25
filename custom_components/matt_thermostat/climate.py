@@ -208,6 +208,27 @@ class RoomMode(str, Enum):
     SECONDARY = "secondary"
     DISABLED = "disabled"
 
+    # internal modes
+    CUSTOM = "custom"
+
+
+class RoomState:
+    """Room states."""
+
+    mode: RoomMode = RoomMode.DISABLED
+    reached_min_at: datetime | None = None
+    reached_target_at: datetime | None = None
+    reached_max_at: datetime | None = None
+
+    # is true when room reaches max temp or stays above target temp for long enough, and stays on until it falls below tolerance
+    is_satisfied: bool = False
+
+    light_on: bool = (
+        False  # value delayed based on raw_light_on_at and raw_light_off_at
+    )
+    raw_light_on_at: datetime | None = None
+    raw_light_off_at: datetime | None = None
+
 
 @dataclass
 class Room:
@@ -230,6 +251,7 @@ class Room:
     standard_mode: RoomMode
     bedtime_mode: RoomMode
     allows_override: bool
+    is_overflow: bool
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> Room:
@@ -325,6 +347,9 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             | ClimateEntityFeature.TURN_ON
         )
         self._attr_preset_modes = [PRESET_NONE]
+        self._room_states = dict[str, RoomState] = {
+            room.name: RoomState() for room in rooms
+        }
 
     async def async_added_to_hass(self) -> None:
         """Run when entity about to be added."""
@@ -552,17 +577,6 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
     async def _async_control_real_climate(self, force: bool = False) -> None:
         """Check if we need to turn heating on or off."""
 
-        async def log(message: str):
-            await self.hass.services.async_call(
-                "logbook",
-                "log",
-                {
-                    "name": "Custom AirCon",
-                    "message": message,
-                },
-                blocking=False,
-            )
-
         async with self._temp_lock:
             if not self._active and None not in (self._target_temp,):
                 self._active = True
@@ -572,12 +586,13 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
 
             presence = self.hass.states.get(self._presence_entity_id).state == STATE_ON
             manual = self.hass.states.get(self._manual_entity_id).state == STATE_ON
-            bedtime = self.hass.states.get(self._bedtime_entity_id).state == STATE_ON
 
             if manual:
+                self._reset_all_room_states()
                 return
 
             if not presence or self._hvac_mode == HVACMode.OFF:
+                self._reset_all_room_states()
                 await self.hass.services.async_call(
                     "climate",
                     "set_hvac_mode",
@@ -587,7 +602,6 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 return
 
             # --- Control loop ---
-            fan_speed = "off"
             custom_rooms = []
             primary_rooms = []
             secondary_rooms = []
@@ -597,37 +611,14 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
 
             # --- Put each room into the correct sub list ---
             for room in self._rooms:
-                if room.name in self._child_thermostats:
-                    child_thermo = self._child_thermostats[room.name]
-                    if child_thermo.hvac_mode in [HVACMode.HEAT, HVACMode.COOL]:
-                        custom_rooms.append(room)
-                        continue
-
-                if bedtime:
-                    mode = room.bedtime_mode
-                else:
-                    mode = room.standard_mode
-
-                real_mode = RoomMode.DISABLED
-                if mode == RoomMode.SECONDARY:
-                    real_mode = RoomMode.SECONDARY
-                elif mode == RoomMode.PRIMARY:
-                    if room.light_entity and not bedtime:
-                        if self.hass.states.get(room.light_entity).state in [
-                            STATE_OFF,
-                            STATE_UNAVAILABLE,
-                            STATE_UNKNOWN,
-                        ]:
-                            real_mode = RoomMode.SECONDARY
-                        else:
-                            real_mode = RoomMode.PRIMARY
-                    else:
-                        real_mode = RoomMode.PRIMARY
-
+                real_mode = self._calculate_room_mode(room)
+                self._room_states[room.name].mode = real_mode
                 if real_mode == RoomMode.PRIMARY:
                     primary_rooms.append(room)
                 elif real_mode == RoomMode.SECONDARY:
                     secondary_rooms.append(room)
+                elif real_mode == RoomMode.CUSTOM:
+                    custom_rooms.append(room)
                 else:
                     disabled_rooms.append(room)
 
@@ -652,11 +643,9 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     continue
                 current_temp = float(sensor_state.state)
 
-                is_active = await self.async_update_room(
+                await self.async_update_room(
                     room=room, current_temp=current_temp, target_temp=target_temp
                 )
-                if is_active:
-                    fan_speed = "auto"
 
             for room in primary_rooms:
                 sensor_state = self.hass.states.get(room.sensor_entity)
@@ -669,11 +658,9 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 ):
                     lowest_primary_current_temp = current_temp
 
-                is_active = await self.async_update_room(
+                await self.async_update_room(
                     room=room, current_temp=current_temp, target_temp=self._target_temp
                 )
-                if is_active:
-                    fan_speed = "auto"
 
             # --- Apply AC mode, temp, and fan speed ---
             await self.hass.services.async_call(
@@ -689,7 +676,8 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             if lowest_primary_current_temp is not None:
                 self._attr_current_temperature = lowest_primary_current_temp
 
-            if fan_speed == "off":
+            fan_speed = await self.calculate_fan_speed()
+            if not fan_speed:
                 await self.hass.services.async_call(
                     "climate",
                     "turn_off",
@@ -697,6 +685,12 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     blocking=False,
                 )
             else:
+                device_active = self._is_device_active()
+                if device_active is not None and not device_active:
+                    # we are turning AC on, so mark all rooms as not satisfied
+                    for room_state in self._room_states.values():
+                        room_state.satisfied = False
+
                 await self.hass.services.async_call(
                     "climate",
                     "set_fan_mode",
@@ -715,6 +709,54 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
 
             await self.async_update_child_thermostats()
 
+    def _reset_all_room_states(self) -> None:
+        """Reset all room states to their initial values."""
+        for name, _ in self._room_states:
+            self.room_states[name] = RoomState()
+
+    def _calculate_room_mode(self, room: Room) -> RoomMode:
+        """Calculate the current mode of a room."""
+        if room.name in self._child_thermostats:
+            child_thermo = self._child_thermostats[room.name]
+            if child_thermo.hvac_mode in [HVACMode.HEAT, HVACMode.COOL]:
+                return RoomMode.CUSTOM
+
+        bedtime = self.hass.states.get(self._bedtime_entity_id).state == STATE_ON
+        if bedtime:
+            mode = room.bedtime_mode
+        else:
+            mode = room.standard_mode
+
+        if mode == RoomMode.SECONDARY:
+            return RoomMode.SECONDARY
+        if mode == RoomMode.PRIMARY:
+            if room.light_entity and not bedtime:
+                room_state = self._room_states[room.name]
+                if self.hass.states.get(room.light_entity).state in [
+                    STATE_OFF,
+                    STATE_UNAVAILABLE,
+                    STATE_UNKNOWN,
+                ]:
+                    room_state.raw_light_on_at = None
+                    if room_state.raw_light_off_at is None:
+                        room_state.raw_light_off_at = datetime.now()
+                    elif room_state.raw_light_off_at > datetime.now() - timedelta(
+                        minutes=2
+                    ):
+                        room_state.light_on = False
+
+                    return RoomMode.SECONDARY
+
+                room_state.raw_light_off_at = None
+                if room_state.raw_light_on_at is None:
+                    room_state.raw_light_on_at = datetime.now()
+                elif room_state.raw_light_on_at > datetime.now() - timedelta(minutes=2):
+                    room_state.light_on = True
+
+            return RoomMode.PRIMARY
+
+        return RoomMode.DISABLED
+
     async def async_update_secondary_rooms(self, secondary_rooms: list[Room]) -> None:
         """Updates secondary rooms and is called when other rooms are needing the air con on."""
         target_temp_secondary = max(self._target_temp - 2, 16)
@@ -731,7 +773,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
 
     async def async_update_room(
         self, room: Room, current_temp: float, target_temp: float
-    ) -> bool:
+    ) -> None:
         """Update the target temperature for a room."""
         diff = target_temp - current_temp
         cover_state = self.hass.states.get(room.cover_entity)
@@ -739,28 +781,82 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             cover_state.attributes.get("current_position", 0) if cover_state else 0
         )
 
-        if diff > self._cold_tolerance or (
-            -1 * self._hot_tolerance < diff <= self._cold_tolerance and cover_pos > 0
-        ):
-            if cover_pos < 100:
-                await self.hass.services.async_call(
-                    "cover",
-                    "set_cover_position",
-                    {"entity_id": room.cover_entity, "position": 100},
-                    blocking=False,
-                )
-            return True
-        if diff <= -1 * self._hot_tolerance:
-            if cover_pos > 0:
-                await self.hass.services.async_call(
-                    "cover",
-                    "set_cover_position",
-                    {"entity_id": room.cover_entity, "position": 0},
-                    blocking=False,
-                )
-            return False
+        room_state = self._room_states[room.name]
+        if diff > self._cold_tolerance:
+            room_state.reached_min_at = None
+            room_state.is_satisfied = False
+        elif room_state.reached_min_at is None:
+            room_state.reached_min_at = datetime.now()
 
-        return False
+        if diff > 0:
+            room_state.reached_target_at = None
+        elif room_state.reached_target_at is None:
+            room_state.reached_target_at = datetime.now()
+        elif not room_state.is_satisfied and (
+            datetime.now() - room_state.reached_target_at
+        ) > timedelta(minutes=5):
+            room_state.is_satisfied = True
+
+        if diff > -1 * self._hot_tolerance:
+            room_state.reached_max_at = None
+        elif room_state.reached_max_at is None:
+            room_state.reached_max_at = datetime.now()
+            room_state.is_satisfied = True
+
+        if diff < -0.5 * self._hot_tolerance:
+            desired_cover_pos = 100
+        elif diff <= -1 * self._hot_tolerance:
+            desired_cover_pos = 0
+        elif self._room_states[room.name].reached_target_at is not None and (
+            datetime.now() - self._room_states[room.name].reached_target_at
+        ) > timedelta(minutes=5):
+            desired_cover_pos = 50
+        else:
+            desired_cover_pos = 100
+
+        if desired_cover_pos != cover_pos:
+            await self.hass.services.async_call(
+                "cover",
+                "set_cover_position",
+                {"entity_id": room.cover_entity, "position": desired_cover_pos},
+                blocking=False,
+            )
+
+    async def calculate_fan_speed(self) -> str | None:
+        """Figure out what fan speed to use."""
+        # Determine if HVAC should be on
+        is_on = False
+        overflow_room_state: RoomState | None = None
+        below_target_count = 0
+        for room in self._rooms:
+            state = self._room_states[room.name]
+            if state.mode == RoomMode.DISABLED:
+                continue
+            if room.is_overflow:
+                overflow_room_state = state
+
+            if state.reached_target_at is None:
+                below_target_count += 1
+
+            if state.mode != RoomMode.PRIMARY:
+                continue
+
+            if room.light_entity is not None and state.light_off:
+                # We treat this room as primary if AC is on, but time delayed light switch is still off
+                # Therefore we do not let this room affect if we turn on the AC
+                continue
+
+            if not state.is_satisfied:
+                is_on = True
+
+        if not is_on:
+            return None
+
+        if overflow_room_state.reached_target_at is None and below_target_count > 1:
+            # No fear of medium being too strong
+            return "medium"
+
+        return "auto"
 
     async def async_update_child_thermostats(self):
         """Update child thermostat state."""
