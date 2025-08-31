@@ -258,6 +258,7 @@ class Room:
     bedtime_mode: RoomMode
     allows_override: bool
     is_overflow: bool
+    vents: int
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> Room:
@@ -293,6 +294,7 @@ class Room:
             bedtime_mode=bedtime_mode,
             allows_override=bool(data.get("allows_override", False)),
             is_overflow=bool(data.get("is_overflow", False)),
+            vents=int(data.get("vents", 1)),
         )
 
 
@@ -815,7 +817,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         # Determine if HVAC should be on
         is_on = False
         overflow_room_state: RoomState | None = None
-        below_target_count = 0
+        vents = 0.0
         for room in self._rooms:
             state = self._room_states[room.name]
             if state.mode == RoomMode.DISABLED:
@@ -823,9 +825,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             if room.is_overflow:
                 overflow_room_state = state
 
-            if state.reached_target_at is None:
-                below_target_count += 1
-
+            vents += float(state.cover_pos) / 100.0 * float(room.vents)
             if (
                 state.mode in [RoomMode.PRIMARY, RoomMode.CUSTOM]
                 and not state.is_satisfied
@@ -835,10 +835,13 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         if not is_on:
             return None
 
-        if overflow_room_state.cover_pos == 100:
-            # No fear of medium being too strong
+        if vents >= 4.0:
+            return "high"
+        if vents >= 3.0:
             return "medium"
-
+        # if overflow_room_state.cover_pos == 100:
+        #     # No fear of medium being too strong
+        #     return "medium"
         return "auto"
 
     async def _async_update_child_thermostats(self):
