@@ -222,8 +222,8 @@ class RoomState:
 
     mode: RoomMode = RoomMode.DISABLED
     cover_pos: int = 0
-    reached_min_at: datetime | None = None
     reached_target_at: datetime | None = None
+    reached_half_max_at: datetime | None = None
     reached_max_at: datetime | None = None
 
     # is true when room reaches max temp or stays above target temp for long enough, and stays on until it falls below tolerance
@@ -766,25 +766,17 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
 
         room_state = self._room_states[room.name]
         if diff > self._cold_tolerance:
-            room_state.reached_min_at = None
             room_state.is_satisfied = False
-        else:
-            if is_first_temp_reading:
-                # When first launched, count any rooms within the range as satisfied
-                room_state.is_satisfied = True
-            if room_state.reached_min_at is None:
-                room_state.reached_min_at = datetime.now()
+        elif is_first_temp_reading:
+            # When first launched, count any rooms within the range as satisfied
+            room_state.is_satisfied = True
 
         if diff > 0:
             room_state.reached_target_at = None
         elif room_state.reached_target_at is None:
             room_state.reached_target_at = datetime.now()
-        elif not room_state.is_satisfied and (
-            datetime.now() - room_state.reached_target_at
-        ) > timedelta(minutes=5):
-            room_state.is_satisfied = True
 
-        if diff > -1 * self._hot_tolerance:
+        if diff >= -1 * self._hot_tolerance:
             room_state.reached_max_at = None
         elif room_state.reached_max_at is None:
             room_state.reached_max_at = datetime.now()
@@ -792,14 +784,22 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
 
         if diff > -0.5 * self._hot_tolerance:
             desired_cover_pos = 100
-        elif diff <= -1 * self._hot_tolerance:
-            desired_cover_pos = 0
-        elif room_state.reached_target_at is not None and (
-            datetime.now() - room_state.reached_target_at
-        ) > timedelta(minutes=5):
-            desired_cover_pos = 50
+            room_state.reached_half_max_at = None
         else:
-            desired_cover_pos = 100
+            if room_state.reached_half_max_at is None:
+                room_state.reached_half_max_at = datetime.now()
+            elif not room_state.is_satisfied and (
+                datetime.now() - room_state.reached_half_max_at
+            ) >= timedelta(minutes=5):
+                # spent enough time above half max, so let's treat this room as satisfied
+                room_state.is_satisfied = True
+
+            if diff <= -1 * self._hot_tolerance:
+                desired_cover_pos = 0
+            elif room_state.is_satisfied:
+                desired_cover_pos = 50
+            else:
+                desired_cover_pos = 100
 
         room_state.cover_pos = desired_cover_pos
         if desired_cover_pos != cover_pos:
