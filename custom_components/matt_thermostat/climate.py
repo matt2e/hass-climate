@@ -539,8 +539,8 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 self._reset_all_room_states()
                 await self.hass.services.async_call(
                     "climate",
-                    "set_hvac_mode",
-                    {"entity_id": self._real_climate_entity_id, "hvac_mode": "off"},
+                    "turn_off",
+                    {"entity_id": self._real_climate_entity_id},
                     blocking=False,
                 )
                 return
