@@ -831,7 +831,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         if not is_on:
             return None
 
-        if vents >= 4.0:
+        if vents >= 5.0:
             return "high"
         if vents >= 3.0:
             return "medium"
