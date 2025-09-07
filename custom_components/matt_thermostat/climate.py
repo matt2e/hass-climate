@@ -539,13 +539,6 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
 
             if not presence or self._hvac_mode == HVACMode.OFF:
                 self._reset_all_room_states()
-                await self.hass.services.async_call(
-                    "climate",
-                    "turn_off",
-                    {"entity_id": self._real_climate_entity_id},
-                    blocking=False,
-                )
-                return
 
             # --- Control loop ---
             custom_rooms = []
@@ -557,7 +550,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
 
             # --- Put each room into the correct sub list ---
             for room in self._rooms:
-                real_mode = self._calculate_room_mode(room)
+                real_mode = self._calculate_room_mode(room, presence)
 
                 self._transition_room_to_mode(room, real_mode)
 
@@ -690,8 +683,11 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         for name, _ in self._room_states:
             self.room_states[name] = RoomState()
 
-    def _calculate_room_mode(self, room: Room) -> RoomMode:
+    def _calculate_room_mode(self, room: Room, presence: bool) -> RoomMode:
         """Calculate the current mode of a room."""
+        if not presence or self._hvac_mode == HVACMode.OFF:
+            return RoomMode.DISABLED
+
         if room.name in self._child_thermostats:
             child_thermo = self._child_thermostats[room.name]
             if child_thermo.hvac_mode in [HVACMode.HEAT, HVACMode.COOL]:
