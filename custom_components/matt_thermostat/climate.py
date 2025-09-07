@@ -680,8 +680,8 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
 
     def _reset_all_room_states(self) -> None:
         """Reset all room states to their initial values."""
-        for name, _ in self._room_states:
-            self.room_states[name] = RoomState()
+        for name in self._room_states:
+            self._room_states[name] = RoomState()
 
     def _calculate_room_mode(self, room: Room, presence: bool) -> RoomMode:
         """Calculate the current mode of a room."""
