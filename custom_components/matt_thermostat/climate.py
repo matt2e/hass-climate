@@ -547,7 +547,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             secondary_rooms = []
             disabled_rooms = []
             lowest_primary_current_temp: float | None = None
-            highest_target_temperature = self._target_temp
+            most_extreme_temperature = self._target_temp
 
             # --- Put each room into the correct sub list ---
             for room in self._rooms:
@@ -576,9 +576,14 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 child_thermo = self._child_thermostats.get(room.name)
 
                 target_temp = child_thermo.target_temperature or self._target_temp
-                highest_target_temperature = max(
-                    highest_target_temperature, target_temp
-                )
+                if self._hvac_mode == HVACMode.COOL:
+                    most_extreme_temperature = min(
+                        most_extreme_temperature, target_temp
+                    )
+                else:
+                    most_extreme_temperature = max(
+                        most_extreme_temperature, target_temp
+                    )
 
                 sensor_state = self.hass.states.get(room.sensor_entity)
                 if sensor_state is None:
@@ -604,13 +609,18 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     room=room, current_temp=current_temp, target_temp=self._target_temp
                 )
 
+            if self._hvac_mode == HVACMode.COOL:
+                most_extreme_temperature = math.floor(most_extreme_temperature)
+            else:
+                most_extreme_temperature = math.ceil(most_extreme_temperature)
+
             # --- Apply AC mode, temp, and fan speed ---
             await self.hass.services.async_call(
                 "climate",
                 "set_temperature",
                 {
                     "entity_id": self._real_climate_entity_id,
-                    ATTR_TEMPERATURE: math.ceil(highest_target_temperature),
+                    ATTR_TEMPERATURE: most_extreme_temperature,
                 },
                 blocking=False,
             )
@@ -639,10 +649,19 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     {"entity_id": self._real_climate_entity_id, "fan_mode": fan_speed},
                     blocking=False,
                 )
+
+                if self._hvac_mode == HVACMode.COOL:
+                    hvac_mode_str = "cool"
+                else:
+                    hvac_mode_str = "heat"
+
                 await self.hass.services.async_call(
                     "climate",
                     "set_hvac_mode",
-                    {"entity_id": self._real_climate_entity_id, "hvac_mode": "heat"},
+                    {
+                        "entity_id": self._real_climate_entity_id,
+                        "hvac_mode": hvac_mode_str,
+                    },
                     blocking=False,
                 )
 
