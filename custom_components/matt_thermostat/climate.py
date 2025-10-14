@@ -51,6 +51,7 @@ from homeassistant.helpers.reload import async_setup_reload_service
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
+from .child_thermastat import ChildThermostat
 from .const import (
     CONF_BEDTIME,
     CONF_COLD_TOLERANCE,
@@ -676,7 +677,10 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         else:
             return
 
-        room_state.is_satisfied = current_temp >= target_temp - self._cold_tolerance
+        if self._hvac_mode == HVACMode.HEAT:
+            room_state.is_satisfied = current_temp >= target_temp - self._cold_tolerance
+        elif self._hvac_mode == HVACMode.COOL:
+            room_state.is_satisfied = current_temp <= target_temp + self._hot_tolerance
 
     def _reset_all_room_states(self) -> None:
         """Reset all room states to their initial values."""
@@ -733,7 +737,11 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         return RoomMode.DISABLED
 
     def _target_secondary_temp(self) -> float | None:
-        return max(self._target_temp - 2, 16)
+        if self.hvac_mode == HVACMode.HEAT:
+            return max(self._target_temp - 2, 16)
+        if self.hvac_mode == HVACMode.COOL:
+            return min(self._target_temp + 2, 28)
+        return self._target_temp
 
     async def async_update_secondary_rooms(self, secondary_rooms: list[Room]) -> None:
         """Updates secondary rooms and is called when other rooms are needing the air con on."""
@@ -756,14 +764,25 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         if is_first_temp_reading:
             self._sensor_found_for_room[room.name] = True
 
-        diff = target_temp - current_temp
+        if self._hvac_mode == HVACMode.COOL:
+            # The more cooling needed the higher the diff
+            diff = current_temp - target_temp
+
+            min_diff = -1 * self._cold_tolerance  # when to cut off cooling
+            max_diff = self._hot_tolerance  # when to go full cooling
+        else:
+            # The more heating needed the higher the diff
+            diff = target_temp - current_temp
+            min_diff = -1 * self._hot_tolerance  # when to cut off heating
+            max_diff = self._cold_tolerance  # when to go full heating
+
         cover_state = self.hass.states.get(room.cover_entity)
         cover_pos = (
             cover_state.attributes.get("current_position", 0) if cover_state else 0
         )
 
         room_state = self._room_states[room.name]
-        if diff > self._cold_tolerance:
+        if diff > max_diff:
             room_state.is_satisfied = False
         elif is_first_temp_reading:
             # When first launched, count any rooms within the range as satisfied
@@ -774,13 +793,13 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         elif room_state.reached_target_at is None:
             room_state.reached_target_at = datetime.now()
 
-        if diff >= -1 * self._hot_tolerance:
+        if diff >= min_diff:
             room_state.reached_max_at = None
         elif room_state.reached_max_at is None:
             room_state.reached_max_at = datetime.now()
             room_state.is_satisfied = True
 
-        if diff > -0.5 * self._hot_tolerance:
+        if diff > min_diff:
             desired_cover_pos = 100
             room_state.reached_half_max_at = None
         else:
@@ -792,7 +811,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 # spent enough time above half max, so let's treat this room as satisfied
                 room_state.is_satisfied = True
 
-            if diff <= -1 * self._hot_tolerance:
+            if diff <= min_diff:
                 desired_cover_pos = 0
             elif room_state.is_satisfied:
                 desired_cover_pos = 50
@@ -939,153 +958,3 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             return False
 
         return True
-
-
-class ChildThermostat(ClimateEntity, RestoreEntity):
-    """Representation of a Child Thermostat device."""
-
-    _attr_should_poll = False
-
-    def __init__(
-        self,
-        hass: HomeAssistant,
-        *,
-        name: str,
-        min_temp: float | None,
-        max_temp: float | None,
-        target_temp: float | None,
-        precision: float | None,
-        target_temperature_step: float | None,
-        unit: UnitOfTemperature,
-        unique_id: str | None,
-    ) -> None:
-        """Initialize the thermostat."""
-        self._attr_name = name
-        self._hvac_mode = HVACMode.AUTO
-        self._hvac_action = HVACAction.OFF
-        self._saved_target_temp = target_temp
-        self._temp_precision = precision
-        self._temp_target_temperature_step = target_temperature_step
-        self._attr_hvac_modes = [HVACMode.AUTO, HVACMode.COOL, HVACMode.HEAT]
-        self._active = False
-        self._min_temp = min_temp
-        self._max_temp = max_temp
-        self._attr_preset_mode = PRESET_NONE
-        self._target_temp = target_temp
-        self._attr_temperature_unit = unit
-        self._attr_unique_id = unique_id
-        self._attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE
-        self._attr_preset_modes = [PRESET_NONE]
-
-    async def async_added_to_hass(self) -> None:
-        """Run when entity about to be added."""
-        await super().async_added_to_hass()
-
-        @callback
-        def _async_startup(_: Event | None = None) -> None:
-            """Init on startup."""
-
-        if self.hass.state is CoreState.running:
-            _async_startup()
-        else:
-            self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_START, _async_startup)
-
-        # Set default state to Auto
-        if not self._hvac_mode:
-            self._hvac_mode = HVACMode.AUTO
-
-    @property
-    def precision(self) -> float:
-        """Return the precision of the system."""
-        if self._temp_precision is not None:
-            return self._temp_precision
-        return super().precision
-
-    @property
-    def target_temperature_step(self) -> float:
-        """Return the supported step of target temperature."""
-        if self._temp_target_temperature_step is not None:
-            return self._temp_target_temperature_step
-        # if a target_temperature_step is not defined, fallback to equal the precision
-        return self.precision
-
-    @property
-    def hvac_mode(self) -> HVACMode | None:
-        """Return current operation."""
-        return self._hvac_mode
-
-    @property
-    def hvac_action(self) -> HVACAction:
-        """Return the current running hvac operation if supported.
-
-        Need to be one of CURRENT_HVAC_*.
-        """
-        return self._hvac_action
-
-    @property
-    def target_temperature(self) -> float | None:
-        """Return the temperature we try to reach."""
-        return self._target_temp
-
-    async def async_set_child_state(
-        self,
-        parent_target_temperature: float,
-        current_temperature: float,
-        hvac_action: HVACAction,
-    ) -> None:
-        """Set current state for child thermometer."""
-        if (
-            self._hvac_action == hvac_action
-            and self._attr_current_temperature == current_temperature
-            and (
-                self._hvac_mode in [HVACMode.HEAT, HVACMode.COOL]
-                or self._target_temp == parent_target_temperature
-            )
-        ):
-            # early exit as nothing has changed. This possibly avoids infinite loop as parent thermostat watches this state
-            return
-
-        if self._hvac_mode not in [HVACMode.HEAT, HVACMode.COOL]:
-            self._target_temp = parent_target_temperature
-        self._attr_current_temperature = current_temperature
-        self._hvac_action = hvac_action
-        self.async_write_ha_state()
-
-    async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-        """Set hvac mode."""
-        if hvac_mode == HVACMode.HEAT:
-            self._hvac_mode = HVACMode.HEAT
-        elif hvac_mode == HVACMode.COOL:
-            self._hvac_mode = HVACMode.COOL
-        elif hvac_mode == HVACMode.AUTO:
-            self._hvac_mode = HVACMode.AUTO
-        else:
-            _LOGGER.error("Unrecognized hvac mode: %s", hvac_mode)
-            return
-        # Ensure we update the current operation after changing the mode
-        self.async_write_ha_state()
-
-    async def async_set_temperature(self, **kwargs: Any) -> None:
-        """Set new target temperature."""
-        if (temperature := kwargs.get(ATTR_TEMPERATURE)) is None:
-            return
-        self._target_temp = temperature
-        self.async_write_ha_state()
-
-    @property
-    def min_temp(self) -> float:
-        """Return the minimum temperature."""
-        if self._min_temp is not None:
-            return self._min_temp
-
-        # get default temp from super class
-        return super().min_temp
-
-    @property
-    def max_temp(self) -> float:
-        """Return the maximum temperature."""
-        if self._max_temp is not None:
-            return self._max_temp
-
-        # Get default temp from super class
-        return super().max_temp
