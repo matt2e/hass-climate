@@ -605,9 +605,9 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 if primary_current_temp is None:
                     primary_current_temp = current_temp
                 elif self._hvac_mode in {HVACMode.COOL, HVACMode.FAN_ONLY}:
-                    primary_current_temp = max(primary_current_temp, target_temp)
+                    primary_current_temp = max(primary_current_temp, current_temp)
                 else:
-                    primary_current_temp = min(primary_current_temp, target_temp)
+                    primary_current_temp = min(primary_current_temp, current_temp)
 
                 await self.async_update_room(
                     room=room, current_temp=current_temp, target_temp=self._target_temp
