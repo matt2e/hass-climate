@@ -48,7 +48,12 @@ class ChildThermostat(ClimateEntity, RestoreEntity):
         self._saved_target_temp = target_temp
         self._temp_precision = precision
         self._temp_target_temperature_step = target_temperature_step
-        self._attr_hvac_modes = [HVACMode.AUTO, HVACMode.COOL, HVACMode.HEAT]
+        self._attr_hvac_modes = [
+            HVACMode.AUTO,
+            HVACMode.COOL,
+            HVACMode.FAN_ONLY,
+            HVACMode.HEAT,
+        ]
         self._active = False
         self._min_temp = min_temp
         self._max_temp = max_temp
@@ -120,14 +125,14 @@ class ChildThermostat(ClimateEntity, RestoreEntity):
             self._hvac_action == hvac_action
             and self._attr_current_temperature == current_temperature
             and (
-                self._hvac_mode in [HVACMode.HEAT, HVACMode.COOL]
+                self._hvac_mode in [HVACMode.HEAT, HVACMode.COOL, HVACMode.FAN_ONLY]
                 or self._target_temp == parent_target_temperature
             )
         ):
             # early exit as nothing has changed. This possibly avoids infinite loop as parent thermostat watches this state
             return
 
-        if self._hvac_mode not in [HVACMode.HEAT, HVACMode.COOL]:
+        if self._hvac_mode not in [HVACMode.HEAT, HVACMode.COOL, HVACMode.FAN_ONLY]:
             self._target_temp = parent_target_temperature
         self._attr_current_temperature = current_temperature
         self._hvac_action = hvac_action
@@ -135,12 +140,13 @@ class ChildThermostat(ClimateEntity, RestoreEntity):
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set hvac mode."""
-        if hvac_mode == HVACMode.HEAT:
-            self._hvac_mode = HVACMode.HEAT
-        elif hvac_mode == HVACMode.COOL:
-            self._hvac_mode = HVACMode.COOL
-        elif hvac_mode == HVACMode.AUTO:
-            self._hvac_mode = HVACMode.AUTO
+        if hvac_mode in {
+            HVACMode.HEAT,
+            HVACMode.COOL,
+            HVACMode.FAN_ONLY,
+            HVACMode.AUTO,
+        }:
+            self._hvac_mode = hvac_mode
         else:
             _LOGGER.error("Unrecognized hvac mode: %s", hvac_mode)
             return

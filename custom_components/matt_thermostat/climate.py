@@ -92,7 +92,7 @@ PLATFORM_SCHEMA_COMMON = vol.Schema(
         vol.Optional(CONF_TARGET_TEMP): vol.Coerce(float),
         vol.Optional(CONF_OUTPUT_TEXT): cv.string,
         vol.Optional(CONF_INITIAL_HVAC_MODE): vol.In(
-            [HVACMode.COOL, HVACMode.HEAT, HVACMode.OFF]
+            [HVACMode.FAN_ONLY, HVACMode.COOL, HVACMode.HEAT, HVACMode.OFF]
         ),
         vol.Optional(CONF_UNIQUE_ID): cv.string,
     }
@@ -344,7 +344,12 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         self._saved_target_temp = target_temp
         self._temp_precision = precision
         self._temp_target_temperature_step = target_temperature_step
-        self._attr_hvac_modes = [HVACMode.OFF, HVACMode.COOL, HVACMode.HEAT]
+        self._attr_hvac_modes = [
+            HVACMode.OFF,
+            HVACMode.FAN_ONLY,
+            HVACMode.COOL,
+            HVACMode.HEAT,
+        ]
         self._active = False
         self._temp_lock = asyncio.Lock()
         self._min_temp = min_temp
@@ -463,6 +468,8 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             return HVACAction.COOLING
         if self._hvac_mode == HVACMode.HEAT:
             return HVACAction.HEATING
+        if self._hvac_mode == HVACMode.FAN_ONLY:
+            return HVACAction.FAN
         return HVACAction.IDLE
 
     @property
@@ -472,12 +479,8 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set hvac mode."""
-        if hvac_mode == HVACMode.HEAT:
-            self._hvac_mode = HVACMode.HEAT
-        elif hvac_mode == HVACMode.COOL:
-            self._hvac_mode = HVACMode.COOL
-        elif hvac_mode == HVACMode.OFF:
-            self._hvac_mode = HVACMode.OFF
+        if hvac_mode in {HVACMode.OFF, HVACMode.COOL, HVACMode.HEAT, HVACMode.FAN_ONLY}:
+            self._hvac_mode = hvac_mode
         else:
             _LOGGER.error("Unrecognized hvac mode: %s", hvac_mode)
             return
@@ -576,7 +579,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 child_thermo = self._child_thermostats.get(room.name)
 
                 target_temp = child_thermo.target_temperature or self._target_temp
-                if self._hvac_mode == HVACMode.COOL:
+                if self._hvac_mode in {HVACMode.COOL, HVACMode.FAN_ONLY}:
                     most_extreme_temperature = min(
                         most_extreme_temperature, target_temp
                     )
@@ -609,7 +612,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     room=room, current_temp=current_temp, target_temp=self._target_temp
                 )
 
-            if self._hvac_mode == HVACMode.COOL:
+            if self._hvac_mode in {HVACMode.COOL, HVACMode.FAN_ONLY}:
                 most_extreme_temperature = math.floor(most_extreme_temperature)
             else:
                 most_extreme_temperature = math.ceil(most_extreme_temperature)
@@ -650,17 +653,12 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     blocking=False,
                 )
 
-                if self._hvac_mode == HVACMode.COOL:
-                    hvac_mode_str = "cool"
-                else:
-                    hvac_mode_str = "heat"
-
                 await self.hass.services.async_call(
                     "climate",
                     "set_hvac_mode",
                     {
                         "entity_id": self._real_climate_entity_id,
-                        "hvac_mode": hvac_mode_str,
+                        "hvac_mode": self._hvac_mode.value,
                     },
                     blocking=False,
                 )
@@ -698,7 +696,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
 
         if self._hvac_mode == HVACMode.HEAT:
             room_state.is_satisfied = current_temp >= target_temp - self._cold_tolerance
-        elif self._hvac_mode == HVACMode.COOL:
+        elif self._hvac_mode in {HVACMode.COOL, HVACMode.FAN_ONLY}:
             room_state.is_satisfied = current_temp <= target_temp + self._hot_tolerance
 
     def _reset_all_room_states(self) -> None:
@@ -713,7 +711,11 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
 
         if room.name in self._child_thermostats:
             child_thermo = self._child_thermostats[room.name]
-            if child_thermo.hvac_mode in [HVACMode.HEAT, HVACMode.COOL]:
+            if child_thermo.hvac_mode in [
+                HVACMode.HEAT,
+                HVACMode.COOL,
+                HVACMode.FAN_ONLY,
+            ]:
                 return RoomMode.CUSTOM
 
         bedtime = self.hass.states.get(self._bedtime_entity_id).state == STATE_ON
@@ -758,7 +760,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
     def _target_secondary_temp(self) -> float | None:
         if self.hvac_mode == HVACMode.HEAT:
             return max(self._target_temp - 2, 16)
-        if self.hvac_mode == HVACMode.COOL:
+        if self.hvac_mode in {HVACMode.COOL, HVACMode.FAN_ONLY}:
             return min(self._target_temp + 2, 28)
         return self._target_temp
 
@@ -783,7 +785,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         if is_first_temp_reading:
             self._sensor_found_for_room[room.name] = True
 
-        if self._hvac_mode == HVACMode.COOL:
+        if self._hvac_mode in {HVACMode.COOL, HVACMode.FAN_ONLY}:
             # The more cooling needed the higher the diff
             diff = current_temp - target_temp
 
