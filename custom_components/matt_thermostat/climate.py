@@ -853,14 +853,14 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         """Figure out what fan speed to use."""
         # Determine if HVAC should be on
         is_on = False
-        overflow_room_state: RoomState | None = None
+        # overflow_room_state: RoomState | None = None
         vents = 0.0
         for room in self._rooms:
             state = self._room_states[room.name]
             if state.mode == RoomMode.DISABLED:
                 continue
-            if room.is_overflow:
-                overflow_room_state = state
+            # if room.is_overflow:
+            #     overflow_room_state = state
 
             vents += float(state.cover_pos) / 100.0 * float(room.vents)
             if (
@@ -872,9 +872,14 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         if not is_on:
             return None
 
-        if vents >= 5.0:
+        if self._hvac_mode == HVACMode.COOL:
+            scale = 0.5
+        else:
+            scale = 1.0
+
+        if vents * scale >= 5.0:
             return "high"
-        if vents >= 3.0:
+        if vents * scale >= 3.0:
             return "medium"
         # if overflow_room_state.cover_pos == 100:
         #     # No fear of medium being too strong
