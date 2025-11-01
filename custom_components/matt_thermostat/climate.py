@@ -549,7 +549,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             primary_rooms = []
             secondary_rooms = []
             disabled_rooms = []
-            lowest_primary_current_temp: float | None = None
+            primary_current_temp: float | None = None
             most_extreme_temperature = self._target_temp
 
             # --- Put each room into the correct sub list ---
@@ -602,11 +602,12 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 if sensor_state is None:
                     continue
                 current_temp = float(sensor_state.state)
-                if (
-                    lowest_primary_current_temp is None
-                    or current_temp < lowest_primary_current_temp
-                ):
-                    lowest_primary_current_temp = current_temp
+                if primary_current_temp is None:
+                    primary_current_temp = current_temp
+                elif self._hvac_mode in {HVACMode.COOL, HVACMode.FAN_ONLY}:
+                    primary_current_temp = max(primary_current_temp, target_temp)
+                else:
+                    primary_current_temp = min(primary_current_temp, target_temp)
 
                 await self.async_update_room(
                     room=room, current_temp=current_temp, target_temp=self._target_temp
@@ -628,8 +629,8 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 blocking=False,
             )
 
-            if lowest_primary_current_temp is not None:
-                self._attr_current_temperature = lowest_primary_current_temp
+            if primary_current_temp is not None:
+                self._attr_current_temperature = primary_current_temp
 
             fan_speed = await self.calculate_fan_speed()
             if not fan_speed:
