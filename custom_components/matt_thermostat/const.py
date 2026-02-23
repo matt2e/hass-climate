@@ -17,4 +17,7 @@ CONF_MIN_TEMP = "min_temp"
 CONF_MIN_DUR = "min_cycle_duration"
 CONF_ROOMS = "rooms"
 DEFAULT_TOLERANCE = 0.4
+DEFAULT_TEMP_MODIFIER = 0.0
 CONF_OUTPUT_TEXT = "output_text"
+CONF_COOLING_TEMP_MODIFIER = "cooling_temp_modifier"
+CONF_HEATING_TEMP_MODIFIER = "heating_temp_modifier"

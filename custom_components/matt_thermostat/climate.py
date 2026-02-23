@@ -55,6 +55,8 @@ from .child_thermastat import ChildThermostat
 from .const import (
     CONF_BEDTIME,
     CONF_COLD_TOLERANCE,
+    CONF_COOLING_TEMP_MODIFIER,
+    CONF_HEATING_TEMP_MODIFIER,
     CONF_HOT_TOLERANCE,
     CONF_MANUAL,
     CONF_MAX_TEMP,
@@ -91,6 +93,8 @@ PLATFORM_SCHEMA_COMMON = vol.Schema(
         vol.Optional(CONF_HOT_TOLERANCE, default=DEFAULT_TOLERANCE): vol.Coerce(float),
         vol.Optional(CONF_TARGET_TEMP): vol.Coerce(float),
         vol.Optional(CONF_OUTPUT_TEXT): cv.string,
+        vol.Optional(CONF_COOLING_TEMP_MODIFIER, default=0.0): vol.Coerce(float),
+        vol.Optional(CONF_HEATING_TEMP_MODIFIER, default=0.0): vol.Coerce(float),
         vol.Optional(CONF_INITIAL_HVAC_MODE): vol.In(
             [HVACMode.FAN_ONLY, HVACMode.COOL, HVACMode.HEAT, HVACMode.OFF]
         ),
@@ -150,6 +154,8 @@ async def _async_setup_config(
     min_cycle_duration: timedelta | None = config.get(CONF_MIN_DUR)
     cold_tolerance: float = config[CONF_COLD_TOLERANCE]
     hot_tolerance: float = config[CONF_HOT_TOLERANCE]
+    cooling_temp_modifier: float = config.get(CONF_COOLING_TEMP_MODIFIER, 0.0)
+    heating_temp_modifier: float = config.get(CONF_HEATING_TEMP_MODIFIER, 0.0)
     initial_hvac_mode: HVACMode | None = config.get(CONF_INITIAL_HVAC_MODE)
     unit = hass.config.units.temperature_unit
 
@@ -195,6 +201,8 @@ async def _async_setup_config(
         min_cycle_duration=min_cycle_duration,
         cold_tolerance=cold_tolerance,
         hot_tolerance=hot_tolerance,
+        cooling_temp_modifier=cooling_temp_modifier,
+        heating_temp_modifier=heating_temp_modifier,
         initial_hvac_mode=initial_hvac_mode,
         precision=precision,
         target_temperature_step=target_temperature_step,
@@ -320,6 +328,8 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         min_cycle_duration: timedelta | None,
         cold_tolerance: float,
         hot_tolerance: float,
+        cooling_temp_modifier: float,
+        heating_temp_modifier: float,
         initial_hvac_mode: HVACMode | None,
         precision: float | None,
         target_temperature_step: float | None,
@@ -340,6 +350,8 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         self._min_cycle_duration = min_cycle_duration
         self._cold_tolerance = cold_tolerance
         self._hot_tolerance = hot_tolerance
+        self._cooling_temp_modifier = cooling_temp_modifier
+        self._heating_temp_modifier = heating_temp_modifier
         self._hvac_mode = initial_hvac_mode
         self._saved_target_temp = target_temp
         self._temp_precision = precision
@@ -614,9 +626,9 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 )
 
             if self._hvac_mode in {HVACMode.COOL, HVACMode.FAN_ONLY}:
-                most_extreme_temperature = math.floor(most_extreme_temperature)
+                most_extreme_temperature = math.floor(most_extreme_temperature) + self._cooling_temp_modifier
             else:
-                most_extreme_temperature = math.ceil(most_extreme_temperature)
+                most_extreme_temperature = math.ceil(most_extreme_temperature) + self._heating_temp_modifier
 
             # --- Apply AC mode, temp, and fan speed ---
             await self.hass.services.async_call(
@@ -631,6 +643,20 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
 
             if primary_current_temp is not None:
                 self._attr_current_temperature = primary_current_temp
+            else:
+                # Still update current temperature for display when rooms are disabled
+                # (e.g. not home or HVAC off) by reading directly from primary-configured rooms
+                display_temp: float | None = None
+                for room in self._rooms:
+                    if room.standard_mode != RoomMode.PRIMARY:
+                        continue
+                    sensor_state = self.hass.states.get(room.sensor_entity)
+                    if sensor_state is None:
+                        continue
+                    temp = float(sensor_state.state)
+                    display_temp = temp if display_temp is None else max(display_temp, temp)
+                if display_temp is not None:
+                    self._attr_current_temperature = display_temp
 
             fan_speed = await self.calculate_fan_speed()
             if not fan_speed:

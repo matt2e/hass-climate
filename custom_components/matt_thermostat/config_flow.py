@@ -18,6 +18,8 @@ from homeassistant.helpers.schema_config_entry_flow import (
 from .const import (
     CONF_BEDTIME,
     CONF_COLD_TOLERANCE,
+    CONF_COOLING_TEMP_MODIFIER,
+    CONF_HEATING_TEMP_MODIFIER,
     CONF_HOT_TOLERANCE,
     CONF_MANUAL,
     CONF_MAX_TEMP,
@@ -27,6 +29,7 @@ from .const import (
     CONF_PRESENCE,
     CONF_REAL_CLIMATE,
     CONF_ROOMS,
+    DEFAULT_TEMP_MODIFIER,
     DEFAULT_TOLERANCE,
     DOMAIN,
 )
@@ -76,6 +79,20 @@ OPTIONS_SCHEMA = {
     ),
     vol.Optional(CONF_OUTPUT_TEXT): selector.EntitySelector(
         selector.EntitySelectorConfig(domain=[input_text.DOMAIN])
+    ),
+    vol.Optional(
+        CONF_COOLING_TEMP_MODIFIER, default=DEFAULT_TEMP_MODIFIER
+    ): selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            mode=selector.NumberSelectorMode.BOX, unit_of_measurement=DEGREE, step=0.1
+        )
+    ),
+    vol.Optional(
+        CONF_HEATING_TEMP_MODIFIER, default=DEFAULT_TEMP_MODIFIER
+    ): selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            mode=selector.NumberSelectorMode.BOX, unit_of_measurement=DEGREE, step=0.1
+        )
     ),
 }
 
