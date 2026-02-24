@@ -67,7 +67,17 @@ class ChildThermostat(ClimateEntity, RestoreEntity):
         """Run when entity about to be added."""
         await super().async_added_to_hass()
 
-        # Set default state to Auto
+        if (old_state := await self.async_get_last_state()) is not None:
+            if old_state.state in {
+                HVACMode.AUTO,
+                HVACMode.HEAT,
+                HVACMode.COOL,
+                HVACMode.FAN_ONLY,
+            }:
+                self._hvac_mode = HVACMode(old_state.state)
+            if (temp := old_state.attributes.get(ATTR_TEMPERATURE)) is not None:
+                self._target_temp = float(temp)
+
         if not self._hvac_mode:
             self._hvac_mode = HVACMode.AUTO
 

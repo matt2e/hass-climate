@@ -50,7 +50,7 @@ from homeassistant.helpers.reload import async_setup_reload_service
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
-from .child_thermastat import ChildThermostat
+from .child_thermostat import ChildThermostat
 from .const import (
     CONF_BEDTIME,
     CONF_COLD_TOLERANCE,
@@ -226,6 +226,7 @@ class RoomMode(str, Enum):
     CUSTOM = "custom"
 
 
+@dataclass
 class RoomState:
     """Room states."""
 
@@ -234,13 +235,10 @@ class RoomState:
     reached_target_at: datetime | None = None
     reached_half_max_at: datetime | None = None
     reached_max_at: datetime | None = None
-
     # is true when room reaches max temp or stays above target temp for long enough, and stays on until it falls below tolerance
     is_satisfied: bool = False
-
-    light_on: bool = (
-        False  # value delayed based on raw_light_on_at and raw_light_off_at
-    )
+    # value delayed based on raw_light_on_at and raw_light_off_at
+    light_on: bool = False
     raw_light_on_at: datetime | None = None
     raw_light_off_at: datetime | None = None
 
@@ -658,7 +656,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 if display_temp is not None:
                     self._attr_current_temperature = display_temp
 
-            fan_speed = await self.calculate_fan_speed()
+            fan_speed = self.calculate_fan_speed()
             if not fan_speed:
                 await self.hass.services.async_call(
                     "climate",
@@ -877,7 +875,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 blocking=False,
             )
 
-    async def calculate_fan_speed(self) -> str | None:
+    def calculate_fan_speed(self) -> str | None:
         """Figure out what fan speed to use."""
         # Determine if HVAC should be on
         is_on = False
