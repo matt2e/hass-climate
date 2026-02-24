@@ -21,3 +21,5 @@ DEFAULT_TEMP_MODIFIER = 0.0
 CONF_OUTPUT_TEXT = "output_text"
 CONF_COOLING_TEMP_MODIFIER = "cooling_temp_modifier"
 CONF_HEATING_TEMP_MODIFIER = "heating_temp_modifier"
+CONF_INITIAL_HVAC_MODE = "initial_hvac_mode"
+CONF_TARGET_TEMP = "target_temp"

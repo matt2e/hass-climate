@@ -65,6 +65,8 @@ from .const import (
     CONF_PRESENCE,
     CONF_REAL_CLIMATE,
     CONF_ROOMS,
+    CONF_INITIAL_HVAC_MODE,
+    CONF_TARGET_TEMP,
     DEFAULT_TEMP_MODIFIER,
     DEFAULT_TOLERANCE,
     DOMAIN,
@@ -75,8 +77,6 @@ _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_NAME = "Home Thermostat"
 
-CONF_INITIAL_HVAC_MODE = "initial_hvac_mode"
-CONF_TARGET_TEMP = "target_temp"
 
 PLATFORM_SCHEMA_COMMON = vol.Schema(
     {
