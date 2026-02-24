@@ -66,6 +66,7 @@ from .const import (
     CONF_PRESENCE,
     CONF_REAL_CLIMATE,
     CONF_ROOMS,
+    DEFAULT_TEMP_MODIFIER,
     DEFAULT_TOLERANCE,
     DOMAIN,
     PLATFORMS,
@@ -93,8 +94,8 @@ PLATFORM_SCHEMA_COMMON = vol.Schema(
         vol.Optional(CONF_HOT_TOLERANCE, default=DEFAULT_TOLERANCE): vol.Coerce(float),
         vol.Optional(CONF_TARGET_TEMP): vol.Coerce(float),
         vol.Optional(CONF_OUTPUT_TEXT): cv.string,
-        vol.Optional(CONF_COOLING_TEMP_MODIFIER, default=0.0): vol.Coerce(float),
-        vol.Optional(CONF_HEATING_TEMP_MODIFIER, default=0.0): vol.Coerce(float),
+        vol.Optional(CONF_COOLING_TEMP_MODIFIER, default=DEFAULT_TEMP_MODIFIER): vol.Coerce(float),
+        vol.Optional(CONF_HEATING_TEMP_MODIFIER, default=DEFAULT_TEMP_MODIFIER): vol.Coerce(float),
         vol.Optional(CONF_INITIAL_HVAC_MODE): vol.In(
             [HVACMode.FAN_ONLY, HVACMode.COOL, HVACMode.HEAT, HVACMode.OFF]
         ),
@@ -159,7 +160,7 @@ async def _async_setup_config(
     initial_hvac_mode: HVACMode | None = config.get(CONF_INITIAL_HVAC_MODE)
     unit = hass.config.units.temperature_unit
 
-    precision: float | None = config.get(PRECISION_TENTHS)
+    precision: float = PRECISION_TENTHS
     target_temperature_step = 0.1
 
     data = json.loads(config[CONF_ROOMS])
@@ -278,8 +279,8 @@ class Room:
                 "Room must have 'name' and 'cover' and 'mode' and 'sensor'"
             )
         name = str(data["name"])
-        if "cover" not in data or "mode" not in data or "sensor" not in data:
-            raise ValueError(f"Room '{name}' must have 'cover' and 'mode' and 'sensor'")
+        if "cover" not in data or "mode" not in data or "sensor" not in data or "bedtime_mode" not in data:
+            raise ValueError(f"Room '{name}' must have 'cover' and 'mode' and 'sensor' and 'bedtime_mode'")
         mode = str(data["mode"])
         if mode not in (RoomMode.PRIMARY, RoomMode.SECONDARY, RoomMode.DISABLED):
             raise ValueError(
@@ -546,8 +547,14 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             if not self._active:
                 return
 
-            presence = self.hass.states.get(self._presence_entity_id).state == STATE_ON
-            manual = self.hass.states.get(self._manual_entity_id).state == STATE_ON
+            # _active is only set True once _target_temp is non-None, and
+            # async_set_temperature never assigns None, so this is always safe.
+            assert self._target_temp is not None
+
+            presence_state = self.hass.states.get(self._presence_entity_id)
+            presence = presence_state is not None and presence_state.state == STATE_ON
+            manual_state = self.hass.states.get(self._manual_entity_id)
+            manual = manual_state is not None and manual_state.state == STATE_ON
 
             if manual:
                 self._reset_all_room_states()
@@ -555,6 +562,10 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
 
             if not presence or self._hvac_mode == HVACMode.OFF:
                 self._reset_all_room_states()
+                # Intentionally do not return here — we still need to drive the
+                # underlying AC and covers to their off/idle states. Child
+                # thermostats may also be in a manual mode that requires the AC
+                # to remain on even when the parent is away or set to OFF.
 
             # --- Control loop ---
             custom_rooms = []
@@ -601,7 +612,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     )
 
                 sensor_state = self.hass.states.get(room.sensor_entity)
-                if sensor_state is None:
+                if sensor_state is None or sensor_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
                     continue
                 current_temp = float(sensor_state.state)
 
@@ -611,7 +622,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
 
             for room in primary_rooms:
                 sensor_state = self.hass.states.get(room.sensor_entity)
-                if sensor_state is None:
+                if sensor_state is None or sensor_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
                     continue
                 current_temp = float(sensor_state.state)
                 if primary_current_temp is None:
@@ -651,7 +662,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     if room.standard_mode != RoomMode.PRIMARY:
                         continue
                     sensor_state = self.hass.states.get(room.sensor_entity)
-                    if sensor_state is None:
+                    if sensor_state is None or sensor_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
                         continue
                     temp = float(sensor_state.state)
                     display_temp = temp if display_temp is None else max(display_temp, temp)
@@ -704,7 +715,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         room_state.mode = mode
 
         sensor_state = self.hass.states.get(room.sensor_entity)
-        if sensor_state is None:
+        if sensor_state is None or sensor_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
             return
         current_temp = float(sensor_state.state)
 
@@ -745,7 +756,8 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             ]:
                 return RoomMode.CUSTOM
 
-        bedtime = self.hass.states.get(self._bedtime_entity_id).state == STATE_ON
+        bedtime_state = self.hass.states.get(self._bedtime_entity_id)
+        bedtime = bedtime_state is not None and bedtime_state.state == STATE_ON
         if bedtime:
             mode = room.bedtime_mode
         else:
@@ -756,7 +768,8 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         if mode == RoomMode.PRIMARY:
             room_state = self._room_states[room.name]
             if room.light_entity:
-                if self.hass.states.get(room.light_entity).state in [
+                light_state = self.hass.states.get(room.light_entity)
+                if light_state is None or light_state.state in [
                     STATE_OFF,
                     STATE_UNAVAILABLE,
                     STATE_UNKNOWN,
@@ -796,7 +809,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         target_temp_secondary = self._target_secondary_temp()
         for room in secondary_rooms:
             sensor_state = self.hass.states.get(room.sensor_entity)
-            if sensor_state is None:
+            if sensor_state is None or sensor_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
                 continue
             current_temp = float(sensor_state.state)
 
@@ -920,7 +933,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 continue
 
             sensor_state = self.hass.states.get(room.sensor_entity)
-            if sensor_state is None:
+            if sensor_state is None or sensor_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
                 continue
             current_temp = float(sensor_state.state)
             cover_state = self.hass.states.get(room.cover_entity)
@@ -982,7 +995,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
 
             # when was target reached
             last_str = (
-                f"{(now - state.reached_target_at).seconds // 60}mins"
+                f"{int((now - state.reached_target_at).total_seconds()) // 60}mins"
                 if state.reached_target_at
                 else ""
             )
