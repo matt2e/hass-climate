@@ -14,10 +14,9 @@ from homeassistant.components.climate import (
 )
 from homeassistant.const import (
     ATTR_TEMPERATURE,
-    EVENT_HOMEASSISTANT_START,
     UnitOfTemperature,
 )
-from homeassistant.core import CoreState, Event, HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.restore_state import RestoreEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -67,15 +66,6 @@ class ChildThermostat(ClimateEntity, RestoreEntity):
     async def async_added_to_hass(self) -> None:
         """Run when entity about to be added."""
         await super().async_added_to_hass()
-
-        @callback
-        def _async_startup(_: Event | None = None) -> None:
-            """Init on startup."""
-
-        if self.hass.state is CoreState.running:
-            _async_startup()
-        else:
-            self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_START, _async_startup)
 
         # Set default state to Auto
         if not self._hvac_mode:

@@ -29,7 +29,6 @@ from homeassistant.const import (
     ATTR_TEMPERATURE,
     CONF_NAME,
     CONF_UNIQUE_ID,
-    EVENT_HOMEASSISTANT_START,
     PRECISION_TENTHS,
     STATE_OFF,
     STATE_ON,
@@ -37,7 +36,7 @@ from homeassistant.const import (
     STATE_UNKNOWN,
     UnitOfTemperature,
 )
-from homeassistant.core import CoreState, Event, HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.entity_platform import (
     AddConfigEntryEntitiesCallback,
@@ -403,16 +402,6 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 timedelta(seconds=30),
             )
         )
-
-        @callback
-        def _async_startup(_: Event | None = None) -> None:
-            """Init on startup."""
-            # original code went here...
-
-        if self.hass.state is CoreState.running:
-            _async_startup()
-        else:
-            self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_START, _async_startup)
 
         # Check If we have an old state
         if (old_state := await self.async_get_last_state()) is not None:
@@ -892,14 +881,11 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         """Figure out what fan speed to use."""
         # Determine if HVAC should be on
         is_on = False
-        # overflow_room_state: RoomState | None = None
         vents = 0.0
         for room in self._rooms:
             state = self._room_states[room.name]
             if state.mode == RoomMode.DISABLED:
                 continue
-            # if room.is_overflow:
-            #     overflow_room_state = state
 
             vents += float(state.cover_pos) / 100.0 * float(room.vents)
             if (
@@ -920,9 +906,6 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             return "high"
         if vents * scale >= 3.0:
             return "medium"
-        # if overflow_room_state.cover_pos == 100:
-        #     # No fear of medium being too strong
-        #     return "medium"
         return "auto"
 
     async def _async_update_child_thermostats(self):
