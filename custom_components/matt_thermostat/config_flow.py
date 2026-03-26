@@ -6,7 +6,6 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 import voluptuous as vol
-
 from homeassistant.components import climate, input_boolean, input_text
 from homeassistant.const import CONF_NAME, DEGREE
 from homeassistant.helpers import selector

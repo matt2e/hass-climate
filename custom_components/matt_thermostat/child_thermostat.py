@@ -129,7 +129,8 @@ class ChildThermostat(ClimateEntity, RestoreEntity):
                 or self._target_temp == parent_target_temperature
             )
         ):
-            # early exit as nothing has changed. This possibly avoids infinite loop as parent thermostat watches this state
+            # early exit as nothing has changed. This possibly avoids
+            # infinite loop as parent thermostat watches this state
             return
 
         if self._hvac_mode not in [HVACMode.HEAT, HVACMode.COOL, HVACMode.FAN_ONLY]:

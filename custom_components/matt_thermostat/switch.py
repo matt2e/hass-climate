@@ -5,13 +5,11 @@ from __future__ import annotations
 import logging
 
 from homeassistant.components.switch import SwitchEntity
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import (
     AddConfigEntryEntitiesCallback,
-    AddEntitiesCallback,
 )
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
 from .const import DOMAIN
 
