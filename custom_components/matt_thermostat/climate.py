@@ -51,6 +51,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
 from .child_thermostat import ChildThermostat
+from .switch import FeedbackSwitch
 from .const import (
     CONF_BEDTIME,
     CONF_COLD_TOLERANCE,
@@ -547,6 +548,9 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 self._reset_all_room_states()
                 return
 
+            # --- Capture user comfort feedback ---
+            too_hot, too_cold = await self._capture_and_reset_feedback()
+
             if not presence or self._hvac_mode == HVACMode.OFF:
                 self._reset_all_room_states()
                 # Intentionally do not return here — we still need to drive the
@@ -576,6 +580,12 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     custom_rooms.append(room)
                 else:
                     disabled_rooms.append(room)
+
+            # --- Apply user comfort feedback ---
+            if (too_hot or too_cold) and self._hvac_mode in {HVACMode.COOL, HVACMode.HEAT, HVACMode.FAN_ONLY}:
+                self._apply_comfort_feedback(
+                    too_hot, too_cold, primary_rooms, secondary_rooms, disabled_rooms
+                )
 
             for room in disabled_rooms:
                 await self.hass.services.async_call(
@@ -991,6 +1001,124 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             {"entity_id": self._output_entity_id, "value": "   ".join(summaries)},
             blocking=False,
         )
+
+    def _apply_comfort_feedback(
+        self,
+        too_hot: bool,
+        too_cold: bool,
+        primary_rooms: list[Room],
+        secondary_rooms: list[Room],
+        disabled_rooms: list[Room],
+    ) -> None:
+        """Apply too hot / too cold feedback to room states and target temp."""
+        is_cooling = self._hvac_mode in {HVACMode.COOL, HVACMode.FAN_ONLY}
+        # "aligned" = the feedback matches what the HVAC mode should fix
+        # too_hot + cooling, or too_cold + heating
+        aligned = (too_hot and is_cooling) or (too_cold and not is_cooling)
+
+        if aligned:
+            # Promote rooms whose light is on but hasn't passed the 2-min delay
+            for room in list(secondary_rooms):
+                room_state = self._room_states[room.name]
+                if room.light_entity and room_state.raw_light_on_at is not None and not room_state.light_on:
+                    # Light is physically on but hasn't been on long enough
+                    room_state.light_on = True
+                    secondary_rooms.remove(room)
+                    primary_rooms.append(room)
+                    self._transition_room_to_mode(room, RoomMode.PRIMARY)
+
+            # Check if any room's temp warrants forcing the AC on
+            any_room_needs_ac = False
+            for room in primary_rooms:
+                sensor_state = self.hass.states.get(room.sensor_entity)
+                if sensor_state is None or sensor_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+                    continue
+                current_temp = float(sensor_state.state)
+                target = self._target_temp
+                if is_cooling and current_temp >= target:
+                    any_room_needs_ac = True
+                elif not is_cooling and current_temp <= target:
+                    any_room_needs_ac = True
+
+            if any_room_needs_ac:
+                # Force all primary/custom rooms to unsatisfied so AC turns on
+                for room in primary_rooms:
+                    self._room_states[room.name].is_satisfied = False
+            else:
+                # Rooms are already past target in the right direction, adjust temp
+                # Make the system work harder: cool lower or heat higher
+                if is_cooling:
+                    self._snap_target_temp(-1)
+                else:
+                    self._snap_target_temp(+1)
+        else:
+            # Opposing feedback: too_hot + heating, or too_cold + cooling
+            all_within_grace = True
+            for room in primary_rooms:
+                sensor_state = self.hass.states.get(room.sensor_entity)
+                if sensor_state is None or sensor_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+                    continue
+                current_temp = float(sensor_state.state)
+                target = self._target_temp
+                if current_temp < target - self._cold_tolerance or current_temp > target + self._hot_tolerance:
+                    all_within_grace = False
+                    break
+
+            if all_within_grace:
+                # All rooms are comfortable enough, treat as satisfied
+                for room in primary_rooms:
+                    self._room_states[room.name].is_satisfied = True
+            else:
+                # Ease off: heat less or cool less
+                if is_cooling:
+                    self._snap_target_temp(+1)
+                else:
+                    self._snap_target_temp(-1)
+
+    def _get_feedback_switches(self) -> tuple[FeedbackSwitch | None, FeedbackSwitch | None]:
+        """Get the too hot / too cold switches from hass.data."""
+        domain_data = self.hass.data.get(DOMAIN, {})
+        entry_data = domain_data.get(self._attr_unique_id, {})
+        return entry_data.get("too_hot_switch"), entry_data.get("too_cold_switch")
+
+    async def _capture_and_reset_feedback(self) -> tuple[bool, bool]:
+        """Read and reset the too hot / too cold switches.
+
+        Returns (too_hot, too_cold). If both are on, returns (False, False).
+        """
+        too_hot_switch, too_cold_switch = self._get_feedback_switches()
+        too_hot = too_hot_switch is not None and too_hot_switch.is_on
+        too_cold = too_cold_switch is not None and too_cold_switch.is_on
+
+        # Turn off whichever are on
+        if too_hot and too_hot_switch is not None:
+            await too_hot_switch.async_turn_off()
+        if too_cold and too_cold_switch is not None:
+            await too_cold_switch.async_turn_off()
+
+        # Both on cancels out
+        if too_hot and too_cold:
+            return False, False
+
+        return too_hot, too_cold
+
+    def _snap_target_temp(self, direction: int) -> None:
+        """Adjust target temp by snapping to next half-degree boundary.
+
+        direction: +1 to increase, -1 to decrease.
+        If currently on a whole or half degree, move by 0.3 in the given direction.
+        Otherwise, snap to the next whole or half degree in the given direction.
+        """
+        temp = self._target_temp
+        remainder = round(temp % 0.5, 2)
+        on_boundary = remainder == 0.0
+        if on_boundary:
+            self._target_temp = round(temp + 0.3 * direction, 1)
+        else:
+            if direction > 0:
+                self._target_temp = math.ceil(temp * 2) / 2
+            else:
+                self._target_temp = math.floor(temp * 2) / 2
 
     @property
     def _is_device_active(self) -> bool | None:

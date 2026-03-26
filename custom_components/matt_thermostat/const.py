@@ -4,7 +4,7 @@ from homeassistant.const import Platform
 
 DOMAIN = "matt_thermostat"
 
-PLATFORMS = [Platform.CLIMATE]
+PLATFORMS = [Platform.CLIMATE, Platform.SWITCH]
 
 CONF_COLD_TOLERANCE = "cold_tolerance"
 CONF_REAL_CLIMATE = "real_climate"
