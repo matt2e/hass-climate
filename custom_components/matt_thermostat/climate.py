@@ -420,6 +420,14 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             )
         )
 
+        # Register callback so turning on a feedback switch triggers
+        # the control loop immediately instead of waiting for the next poll.
+        too_hot_switch, too_cold_switch = self._get_feedback_switches()
+        if too_hot_switch is not None:
+            too_hot_switch.set_on_turn_on_callback(self._async_poll_for_changes)
+        if too_cold_switch is not None:
+            too_cold_switch.set_on_turn_on_callback(self._async_poll_for_changes)
+
         # Check If we have an old state
         if (old_state := await self.async_get_last_state()) is not None:
             # If we have no initial temperature, restore

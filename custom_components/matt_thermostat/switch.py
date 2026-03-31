@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
@@ -26,16 +27,23 @@ class FeedbackSwitch(SwitchEntity):
         self._attr_name = name
         self._attr_unique_id = unique_id
         self._is_on = False
+        self._on_turn_on_callback: Callable[[], Awaitable[None]] | None = None
 
     @property
     def is_on(self) -> bool:
         """Return true if the switch is on."""
         return self._is_on
 
+    def set_on_turn_on_callback(self, callback: Callable[[], Awaitable[None]]) -> None:
+        """Set a callback to be called when the switch is turned on."""
+        self._on_turn_on_callback = callback
+
     async def async_turn_on(self, **kwargs) -> None:
         """Turn the switch on."""
         self._is_on = True
         self.async_write_ha_state()
+        if self._on_turn_on_callback is not None:
+            await self._on_turn_on_callback()
 
     async def async_turn_off(self, **kwargs) -> None:
         """Turn the switch off."""
