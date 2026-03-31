@@ -1084,11 +1084,8 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     continue
                 current_temp = float(sensor_state.state)
                 target = self._target_temp
-                if (
-                    is_cooling
-                    and current_temp >= target
-                    or not is_cooling
-                    and current_temp <= target
+                if (is_cooling and current_temp >= target) or (
+                    not is_cooling and current_temp <= target
                 ):
                     any_room_needs_ac = True
 
@@ -1105,7 +1102,11 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     self._snap_target_temp(+1)
         else:
             # Opposing feedback: too_hot + heating, or too_cold + cooling
-            all_within_grace = True
+            # If any room has already passed the target in the "too much"
+            # direction, just mark everything satisfied (stop the HVAC).
+            # Otherwise lower/raise the target so the system eases off.
+            any_past_target = False
+            any_valid_reading = False
             for room in primary_rooms:
                 sensor_state = self.hass.states.get(room.sensor_entity)
                 if sensor_state is None or sensor_state.state in (
@@ -1114,24 +1115,23 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 ):
                     continue
                 current_temp = float(sensor_state.state)
-                target = self._target_temp
-                if (
-                    current_temp < target - self._cold_tolerance
-                    or current_temp > target + self._hot_tolerance
+                any_valid_reading = True
+                if (not is_cooling and current_temp > self._target_temp) or (
+                    is_cooling and current_temp < self._target_temp
                 ):
-                    all_within_grace = False
+                    any_past_target = True
                     break
 
-            if all_within_grace:
-                # All rooms are comfortable enough, treat as satisfied
-                for room in primary_rooms:
-                    self._room_states[room.name].is_satisfied = True
-            else:
-                # Ease off: heat less or cool less
+            if not any_past_target and any_valid_reading:
+                # No room has reached the target yet — ease off
                 if is_cooling:
                     self._snap_target_temp(+1)
                 else:
                     self._snap_target_temp(-1)
+
+            # Either way, mark all rooms satisfied so HVAC stops now
+            for room in primary_rooms:
+                self._room_states[room.name].is_satisfied = True
 
     def _get_feedback_switches(
         self,

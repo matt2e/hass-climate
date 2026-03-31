@@ -229,6 +229,56 @@ class TestControlLoopTurnsOffAC:
         assert len(turn_off_calls) == 1
 
 
+class TestTooHotWhileHeating:
+    @pytest.mark.asyncio
+    async def test_too_hot_above_target_within_tolerance_turns_off_ac(self):
+        """Room at 19.4, target 19, heating mode, too_hot pressed → AC should turn off.
+
+        The room is above the target but within the grace zone
+        (target ± tolerance = 18.6–19.4). The 'too hot' opposing feedback
+        should mark rooms satisfied and the AC should turn off, NOT snap the
+        target temperature down.
+        """
+        hass = make_hass(
+            room_temps={
+                "sensor.living_room_temp": 19.4,
+                "sensor.bedroom_temp": 19.4,
+                "sensor.office_temp": 19.4,
+            },
+            cover_positions={
+                "cover.living_room_vent": 100,
+                "cover.bedroom_vent": 0,
+                "cover.office_vent": 100,
+            },
+            light_states={
+                "light.living_room": STATE_ON,
+                "light.office": STATE_ON,
+            },
+            real_climate_action=HVACAction.HEATING,
+        )
+        parent = make_parent(hass, target_temp=19.0, hvac_mode=HVACMode.HEAT)
+        too_hot, _too_cold = setup_feedback_switches(hass)
+        too_hot._is_on = True
+
+        # Pre-set rooms as not satisfied (AC is actively heating)
+        for room in parent._rooms:
+            if room.light_entity:
+                parent._room_states[room.name].light_on = True
+
+        await parent._async_control_real_climate()
+
+        # Target temp should NOT have been snapped down
+        assert parent._target_temp == 19.0
+
+        # AC should have been turned off (all rooms satisfied)
+        turn_off_calls = [
+            c
+            for c in hass.services.async_call.call_args_list
+            if c[0][:2] == ("climate", "turn_off")
+        ]
+        assert len(turn_off_calls) == 1
+
+
 class TestSecondaryTemperature:
     def test_secondary_temp_cooling(self):
         parent = make_parent(target_temp=22.0, hvac_mode=HVACMode.COOL)

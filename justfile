@@ -1,3 +1,9 @@
+default:
+    @just --list
+
+list:
+    @just --list
+
 test *args:
     .venv/bin/python -m pytest tests/ {{args}}
 

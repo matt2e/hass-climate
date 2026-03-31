@@ -1,6 +1,6 @@
 pre-commit:
   commands:
     check:
-      run: just check
+      run: bin/just check
     test:
-      run: just test
+      run: bin/just test
