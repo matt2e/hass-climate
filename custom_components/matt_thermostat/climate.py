@@ -606,7 +606,12 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 HVACMode.FAN_ONLY,
             }:
                 self._apply_comfort_feedback(
-                    too_hot, too_cold, primary_rooms, secondary_rooms, disabled_rooms
+                    too_hot,
+                    too_cold,
+                    primary_rooms,
+                    secondary_rooms,
+                    disabled_rooms,
+                    is_active=bool(self._is_device_active),
                 )
 
             for room in disabled_rooms:
@@ -1051,6 +1056,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         primary_rooms: list[Room],
         secondary_rooms: list[Room],
         disabled_rooms: list[Room],
+        is_active: bool = False,
     ) -> None:
         """Apply too hot / too cold feedback to room states and target temp."""
         is_cooling = self._hvac_mode in {HVACMode.COOL, HVACMode.FAN_ONLY}
@@ -1102,36 +1108,42 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     self._snap_target_temp(+1)
         else:
             # Opposing feedback: too_hot + heating, or too_cold + cooling
-            # If any room has already passed the target in the "too much"
-            # direction, just mark everything satisfied (stop the HVAC).
-            # Otherwise lower/raise the target so the system eases off.
-            any_past_target = False
-            any_valid_reading = False
-            for room in primary_rooms:
-                sensor_state = self.hass.states.get(room.sensor_entity)
-                if sensor_state is None or sensor_state.state in (
-                    STATE_UNAVAILABLE,
-                    STATE_UNKNOWN,
-                ):
-                    continue
-                current_temp = float(sensor_state.state)
-                any_valid_reading = True
-                if (not is_cooling and current_temp > self._target_temp) or (
-                    is_cooling and current_temp < self._target_temp
-                ):
-                    any_past_target = True
-                    break
+            if is_active:
+                # AC is actively running — check if rooms have passed the
+                # target before deciding whether to also shift the target.
+                any_past_target = False
+                any_valid_reading = False
+                for room in primary_rooms:
+                    sensor_state = self.hass.states.get(room.sensor_entity)
+                    if sensor_state is None or sensor_state.state in (
+                        STATE_UNAVAILABLE,
+                        STATE_UNKNOWN,
+                    ):
+                        continue
+                    current_temp = float(sensor_state.state)
+                    any_valid_reading = True
+                    if (not is_cooling and current_temp > self._target_temp) or (
+                        is_cooling and current_temp < self._target_temp
+                    ):
+                        any_past_target = True
+                        break
 
-            if not any_past_target and any_valid_reading:
-                # No room has reached the target yet — ease off
+                if not any_past_target and any_valid_reading:
+                    # No room has reached the target yet — ease off
+                    if is_cooling:
+                        self._snap_target_temp(+1)
+                    else:
+                        self._snap_target_temp(-1)
+
+                # Either way, mark all rooms satisfied so HVAC stops now
+                for room in primary_rooms:
+                    self._room_states[room.name].is_satisfied = True
+            else:
+                # AC is idle — user wants to shift the target for next cycle
                 if is_cooling:
                     self._snap_target_temp(+1)
                 else:
                     self._snap_target_temp(-1)
-
-            # Either way, mark all rooms satisfied so HVAC stops now
-            for room in primary_rooms:
-                self._room_states[room.name].is_satisfied = True
 
     def _get_feedback_switches(
         self,
