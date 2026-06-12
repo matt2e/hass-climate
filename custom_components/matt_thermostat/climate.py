@@ -865,14 +865,35 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 continue
             current_temp = float(sensor_state.state)
 
+            # Pull secondary rooms toward the primary target while the AC is
+            # already running for primaries, but judge "satisfied" at the
+            # looser secondary bound.
             await self.async_update_room(
-                room=room, current_temp=current_temp, target_temp=target_temp_secondary
+                room=room,
+                current_temp=current_temp,
+                target_temp=self._target_temp,
+                satisfied_target=target_temp_secondary,
             )
 
     async def async_update_room(
-        self, room: Room, current_temp: float, target_temp: float
+        self,
+        room: Room,
+        current_temp: float,
+        target_temp: float,
+        satisfied_target: float | None = None,
     ) -> None:
-        """Update the target temperature for a room."""
+        """Update the target temperature for a room.
+
+        target_temp drives cover position (how hard to pull the room toward
+        a temperature). satisfied_target drives the is_satisfied bar (the
+        comfort bound the user agreed to). For primary/custom rooms these
+        match; for secondary rooms they differ so the room can ride a
+        primary-driven cycle while still being judged "done" at its own
+        looser bound.
+        """
+        if satisfied_target is None:
+            satisfied_target = target_temp
+
         is_first_temp_reading = not self._sensor_found_for_room[room.name]
         if is_first_temp_reading:
             self._sensor_found_for_room[room.name] = True
@@ -880,12 +901,14 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         if self._hvac_mode in {HVACMode.COOL, HVACMode.FAN_ONLY}:
             # The more cooling needed the higher the diff
             diff = current_temp - target_temp
+            satisfied_diff = current_temp - satisfied_target
 
             min_diff = -1 * self._cold_tolerance  # when to cut off cooling
             max_diff = self._hot_tolerance  # when to go full cooling
         else:
             # The more heating needed the higher the diff
             diff = target_temp - current_temp
+            satisfied_diff = satisfied_target - current_temp
             min_diff = -1 * self._hot_tolerance  # when to cut off heating
             max_diff = self._cold_tolerance  # when to go full heating
 
@@ -895,18 +918,18 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         )
 
         room_state = self._room_states[room.name]
-        if diff > max_diff:
+        if satisfied_diff > max_diff:
             room_state.is_satisfied = False
         elif is_first_temp_reading:
             # When first launched, count any rooms within the range as satisfied
             room_state.is_satisfied = True
 
-        if diff > 0:
+        if satisfied_diff > 0:
             room_state.reached_target_at = None
         elif room_state.reached_target_at is None:
             room_state.reached_target_at = datetime.now()
 
-        if diff >= min_diff:
+        if satisfied_diff >= min_diff:
             room_state.reached_max_at = None
         elif room_state.reached_max_at is None:
             room_state.reached_max_at = datetime.now()

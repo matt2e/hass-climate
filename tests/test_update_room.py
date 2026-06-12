@@ -202,6 +202,521 @@ class TestUpdateRoomHeating:
         assert parent._room_states[room.name].cover_pos == 0
 
 
+class TestUpdateRoomSecondarySatisfiedTarget:
+    """Secondary rooms ride the primary target for cover.
+
+    They still judge "satisfied" at the secondary bound.
+    """
+
+    @pytest.mark.asyncio
+    async def test_between_secondary_and_primary_cooling_cover_open_and_satisfied(self):
+        """Cooling: current 23, primary target 22, secondary target 24.
+
+        Cover follows primary (diff=1 > min_diff → 100%). Satisfied at
+        secondary (satisfied_diff=-1 < min_diff → satisfied).
+        """
+        hass = make_hass(cover_positions={"cover.bedroom_vent": 0})
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.COOL)
+        room = parent._rooms[1]  # Bedroom
+        parent._room_states[room.name] = RoomState(
+            mode=RoomMode.SECONDARY, is_satisfied=False
+        )
+        parent._sensor_found_for_room[room.name] = True
+
+        await parent.async_update_room(
+            room,
+            current_temp=23.0,
+            target_temp=22.0,
+            satisfied_target=24.0,
+        )
+
+        state = parent._room_states[room.name]
+        assert state.cover_pos == 100
+        assert state.is_satisfied is True
+
+    @pytest.mark.asyncio
+    async def test_overshoots_primary_cooling_cover_closes_still_satisfied(self):
+        """Cooling: current 21, primary target 22, secondary target 24.
+
+        Cover closes (diff=-1 < min_diff → 0%). Already past secondary,
+        still satisfied.
+        """
+        hass = make_hass(cover_positions={"cover.bedroom_vent": 100})
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.COOL)
+        room = parent._rooms[1]  # Bedroom
+        parent._room_states[room.name] = RoomState(
+            mode=RoomMode.SECONDARY, is_satisfied=False
+        )
+        parent._sensor_found_for_room[room.name] = True
+
+        await parent.async_update_room(
+            room,
+            current_temp=21.0,
+            target_temp=22.0,
+            satisfied_target=24.0,
+        )
+
+        state = parent._room_states[room.name]
+        assert state.cover_pos == 0
+        assert state.is_satisfied is True
+
+    @pytest.mark.asyncio
+    async def test_above_secondary_cooling_unsatisfied(self):
+        """Cooling: current 25, primary 22, secondary 24.
+
+        Unsatisfied at the secondary bar.
+        """
+        hass = make_hass(cover_positions={"cover.bedroom_vent": 0})
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.COOL)
+        room = parent._rooms[1]
+        parent._room_states[room.name] = RoomState(
+            mode=RoomMode.SECONDARY, is_satisfied=True
+        )
+        parent._sensor_found_for_room[room.name] = True
+
+        # satisfied_diff = 25-24 = 1 > max_diff(0.4) → unsatisfied
+        await parent.async_update_room(
+            room,
+            current_temp=25.0,
+            target_temp=22.0,
+            satisfied_target=24.0,
+        )
+
+        state = parent._room_states[room.name]
+        assert state.is_satisfied is False
+        assert state.cover_pos == 100
+
+    @pytest.mark.asyncio
+    async def test_between_secondary_and_primary_heating_cover_open_and_satisfied(self):
+        """Heating: current 21, primary 22, secondary 20.
+
+        Cover follows primary (diff=22-21=1 > min_diff → 100%). Satisfied
+        at secondary (satisfied_diff=20-21=-1 < min_diff → satisfied).
+        """
+        hass = make_hass(cover_positions={"cover.bedroom_vent": 0})
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.HEAT)
+        room = parent._rooms[1]
+        parent._room_states[room.name] = RoomState(
+            mode=RoomMode.SECONDARY, is_satisfied=False
+        )
+        parent._sensor_found_for_room[room.name] = True
+
+        await parent.async_update_room(
+            room,
+            current_temp=21.0,
+            target_temp=22.0,
+            satisfied_target=20.0,
+        )
+
+        state = parent._room_states[room.name]
+        assert state.cover_pos == 100
+        assert state.is_satisfied is True
+
+    @pytest.mark.asyncio
+    async def test_cool_at_secondary_boundary_sets_reached_target_at(self):
+        """Case a: COOL, current=24 at the secondary target.
+
+        satisfied_diff=0 → reached_target_at set; is_satisfied stays where
+        it was (0 is not > max_diff); diff=2 → cover 100.
+        """
+        hass = make_hass(cover_positions={"cover.bedroom_vent": 0})
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.COOL)
+        room = parent._rooms[1]
+        parent._room_states[room.name] = RoomState(
+            mode=RoomMode.SECONDARY, is_satisfied=False
+        )
+        parent._sensor_found_for_room[room.name] = True
+
+        await parent.async_update_room(
+            room,
+            current_temp=24.0,
+            target_temp=22.0,
+            satisfied_target=24.0,
+        )
+
+        state = parent._room_states[room.name]
+        assert state.cover_pos == 100
+        assert state.reached_target_at is not None
+        assert state.is_satisfied is False
+
+    @pytest.mark.asyncio
+    async def test_cool_at_satisfied_min_boundary_no_reached_max(self):
+        """Case b: COOL, current=23.6 exactly at the satisfied min_diff edge.
+
+        satisfied_diff=-0.4 is >= min_diff(-0.4) → reached_max_at stays
+        None; diff=1.6 → cover 100.
+        """
+        hass = make_hass(cover_positions={"cover.bedroom_vent": 0})
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.COOL)
+        room = parent._rooms[1]
+        parent._room_states[room.name] = RoomState(
+            mode=RoomMode.SECONDARY, is_satisfied=False
+        )
+        parent._sensor_found_for_room[room.name] = True
+
+        await parent.async_update_room(
+            room,
+            current_temp=23.6,
+            target_temp=22.0,
+            satisfied_target=24.0,
+        )
+
+        state = parent._room_states[room.name]
+        assert state.cover_pos == 100
+        assert state.reached_max_at is None
+
+    @pytest.mark.asyncio
+    async def test_cool_just_past_satisfied_min_sets_reached_max(self):
+        """Case c: COOL, current=23.5 just past satisfied min_diff.
+
+        satisfied_diff=-0.5 < min_diff → reached_max_at set and
+        is_satisfied=True; diff=1.5 still > min_diff → cover stays 100.
+        """
+        hass = make_hass(cover_positions={"cover.bedroom_vent": 0})
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.COOL)
+        room = parent._rooms[1]
+        parent._room_states[room.name] = RoomState(
+            mode=RoomMode.SECONDARY, is_satisfied=False
+        )
+        parent._sensor_found_for_room[room.name] = True
+
+        await parent.async_update_room(
+            room,
+            current_temp=23.5,
+            target_temp=22.0,
+            satisfied_target=24.0,
+        )
+
+        state = parent._room_states[room.name]
+        assert state.cover_pos == 100
+        assert state.is_satisfied is True
+        assert state.reached_max_at is not None
+
+    @pytest.mark.asyncio
+    async def test_cool_at_satisfied_max_boundary_keeps_satisfied(self):
+        """Case d: COOL, current=24.4 exactly at the satisfied max_diff edge.
+
+        satisfied_diff=0.4 is not > max_diff(0.4) → is_satisfied stays True.
+        """
+        hass = make_hass(cover_positions={"cover.bedroom_vent": 0})
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.COOL)
+        room = parent._rooms[1]
+        parent._room_states[room.name] = RoomState(
+            mode=RoomMode.SECONDARY, is_satisfied=True
+        )
+        parent._sensor_found_for_room[room.name] = True
+
+        await parent.async_update_room(
+            room,
+            current_temp=24.4,
+            target_temp=22.0,
+            satisfied_target=24.0,
+        )
+
+        state = parent._room_states[room.name]
+        assert state.is_satisfied is True
+        assert state.cover_pos == 100
+
+    @pytest.mark.asyncio
+    async def test_heat_just_past_satisfied_min_sets_reached_max(self):
+        """Case e: HEAT, current=20.5 just past heating satisfied min_diff.
+
+        Mirror of case c. satisfied_diff=20-20.5=-0.5 < min_diff →
+        reached_max_at set and is_satisfied=True; diff=22-20.5=1.5 →
+        cover stays 100.
+        """
+        hass = make_hass(cover_positions={"cover.bedroom_vent": 0})
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.HEAT)
+        room = parent._rooms[1]
+        parent._room_states[room.name] = RoomState(
+            mode=RoomMode.SECONDARY, is_satisfied=False
+        )
+        parent._sensor_found_for_room[room.name] = True
+
+        await parent.async_update_room(
+            room,
+            current_temp=20.5,
+            target_temp=22.0,
+            satisfied_target=20.0,
+        )
+
+        state = parent._room_states[room.name]
+        assert state.cover_pos == 100
+        assert state.is_satisfied is True
+        assert state.reached_max_at is not None
+
+    @pytest.mark.asyncio
+    async def test_heat_well_below_both_targets_unsatisfied(self):
+        """Case f: HEAT, current=18.0 well below both targets.
+
+        satisfied_diff=2 > max_diff → is_satisfied=False;
+        satisfied_diff > 0 → reached_target_at=None; cover stays open.
+        """
+        hass = make_hass(cover_positions={"cover.bedroom_vent": 0})
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.HEAT)
+        room = parent._rooms[1]
+        parent._room_states[room.name] = RoomState(
+            mode=RoomMode.SECONDARY,
+            is_satisfied=True,
+            reached_target_at=datetime.now(),
+        )
+        parent._sensor_found_for_room[room.name] = True
+
+        await parent.async_update_room(
+            room,
+            current_temp=18.0,
+            target_temp=22.0,
+            satisfied_target=20.0,
+        )
+
+        state = parent._room_states[room.name]
+        assert state.is_satisfied is False
+        assert state.reached_target_at is None
+        assert state.cover_pos == 100
+
+    @pytest.mark.asyncio
+    async def test_fan_only_between_targets_matches_cool_behavior(self):
+        """Case g: FAN_ONLY shares the cool branch — cover 100, satisfied."""
+        hass = make_hass(cover_positions={"cover.bedroom_vent": 0})
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.FAN_ONLY)
+        room = parent._rooms[1]
+        parent._room_states[room.name] = RoomState(
+            mode=RoomMode.SECONDARY, is_satisfied=False
+        )
+        parent._sensor_found_for_room[room.name] = True
+
+        await parent.async_update_room(
+            room,
+            current_temp=23.0,
+            target_temp=22.0,
+            satisfied_target=24.0,
+        )
+
+        state = parent._room_states[room.name]
+        assert state.cover_pos == 100
+        assert state.is_satisfied is True
+
+
+class TestSatisfiedTargetTimestampDecoupling:
+    """Timestamps respect their respective targets after the split."""
+
+    @pytest.mark.asyncio
+    async def test_reached_half_max_at_keyed_to_diff_not_satisfied(self):
+        """reached_half_max_at follows diff (cover target), not satisfied_diff.
+
+        current=22.5, primary=22, secondary=24 (cool): diff=0.5 → cover
+        100 and reached_half_max_at stays None, even though
+        satisfied_diff=-1.5 means the room is well past the satisfied bar.
+        """
+        hass = make_hass(cover_positions={"cover.bedroom_vent": 0})
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.COOL)
+        room = parent._rooms[1]
+        parent._room_states[room.name] = RoomState(
+            mode=RoomMode.SECONDARY, is_satisfied=False
+        )
+        parent._sensor_found_for_room[room.name] = True
+
+        await parent.async_update_room(
+            room,
+            current_temp=22.5,
+            target_temp=22.0,
+            satisfied_target=24.0,
+        )
+        state = parent._room_states[room.name]
+        assert state.cover_pos == 100
+        assert state.reached_half_max_at is None
+        assert state.is_satisfied is True
+
+    @pytest.mark.asyncio
+    async def test_reached_half_max_at_sets_when_diff_drops_even_if_satisfied(self):
+        """reached_half_max_at still sets on diff dropping, even when satisfied.
+
+        current=21.5, primary=22, secondary=24 (cool): diff=-0.5 <= min_diff.
+        is_satisfied is already True (carried over) — but reached_half_max_at
+        should still be stamped because it tracks the diff target.
+        """
+        hass = make_hass(cover_positions={"cover.bedroom_vent": 100})
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.COOL)
+        room = parent._rooms[1]
+        parent._room_states[room.name] = RoomState(
+            mode=RoomMode.SECONDARY,
+            is_satisfied=True,
+            reached_max_at=datetime.now() - timedelta(minutes=10),
+        )
+        parent._sensor_found_for_room[room.name] = True
+
+        await parent.async_update_room(
+            room,
+            current_temp=21.5,
+            target_temp=22.0,
+            satisfied_target=24.0,
+        )
+        state = parent._room_states[room.name]
+        assert state.cover_pos == 0
+        assert state.reached_half_max_at is not None
+
+    @pytest.mark.asyncio
+    async def test_reached_max_at_set_via_satisfied_diff_not_first_reading(self):
+        """is_satisfied via reached_max_at path with sensor_found already True.
+
+        Confirms the satisfied_diff < min_diff branch (not the first-reading
+        branch) is what flipped is_satisfied to True.
+        """
+        hass = make_hass(cover_positions={"cover.bedroom_vent": 100})
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.COOL)
+        room = parent._rooms[1]
+        parent._room_states[room.name] = RoomState(
+            mode=RoomMode.SECONDARY, is_satisfied=False
+        )
+        parent._sensor_found_for_room[room.name] = True
+
+        await parent.async_update_room(
+            room,
+            current_temp=21.0,
+            target_temp=22.0,
+            satisfied_target=24.0,
+        )
+        state = parent._room_states[room.name]
+        assert state.is_satisfied is True
+        assert state.reached_max_at is not None
+
+
+class TestSatisfiedTargetNoneFallback:
+    """Passing satisfied_target=None must behave identically to omitting it."""
+
+    @pytest.mark.asyncio
+    async def test_cool_needs_cooling_none_default(self):
+        hass = make_hass(cover_positions={"cover.living_room_vent": 0})
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.COOL)
+        room = parent._rooms[0]
+        parent._room_states[room.name].mode = RoomMode.PRIMARY
+        parent._sensor_found_for_room[room.name] = True
+
+        await parent.async_update_room(
+            room, current_temp=25.0, target_temp=22.0, satisfied_target=None
+        )
+        assert parent._room_states[room.name].cover_pos == 100
+
+    @pytest.mark.asyncio
+    async def test_cool_overcooled_none_default(self):
+        hass = make_hass(cover_positions={"cover.living_room_vent": 100})
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.COOL)
+        room = parent._rooms[0]
+        parent._room_states[room.name].mode = RoomMode.PRIMARY
+        parent._sensor_found_for_room[room.name] = True
+
+        await parent.async_update_room(
+            room, current_temp=21.0, target_temp=22.0, satisfied_target=None
+        )
+        assert parent._room_states[room.name].cover_pos == 0
+
+    @pytest.mark.asyncio
+    async def test_heat_needs_heating_none_default(self):
+        hass = make_hass(cover_positions={"cover.living_room_vent": 0})
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.HEAT)
+        room = parent._rooms[0]
+        parent._room_states[room.name].mode = RoomMode.PRIMARY
+        parent._sensor_found_for_room[room.name] = True
+
+        await parent.async_update_room(
+            room, current_temp=19.0, target_temp=22.0, satisfied_target=None
+        )
+        assert parent._room_states[room.name].cover_pos == 100
+
+    @pytest.mark.asyncio
+    async def test_heat_overheated_none_default(self):
+        hass = make_hass(cover_positions={"cover.living_room_vent": 100})
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.HEAT)
+        room = parent._rooms[0]
+        parent._room_states[room.name].mode = RoomMode.PRIMARY
+        parent._sensor_found_for_room[room.name] = True
+
+        await parent.async_update_room(
+            room, current_temp=23.0, target_temp=22.0, satisfied_target=None
+        )
+        assert parent._room_states[room.name].cover_pos == 0
+
+    @pytest.mark.asyncio
+    async def test_first_reading_within_range_none_default_satisfied(self):
+        """satisfied_target=None falls back to target_temp for first-reading check."""
+        hass = make_hass(cover_positions={"cover.living_room_vent": 0})
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.COOL)
+        room = parent._rooms[0]
+        parent._sensor_found_for_room[room.name] = False
+
+        await parent.async_update_room(
+            room, current_temp=22.2, target_temp=22.0, satisfied_target=None
+        )
+        assert parent._room_states[room.name].is_satisfied is True
+
+
+class TestSecondaryCoolingCycleSequence:
+    """End-to-end sequence: a secondary room cools through a full cycle."""
+
+    @pytest.mark.asyncio
+    async def test_full_cycle_transitions(self):
+        """Walk t0..t3 through a cooling cycle and verify each transition.
+
+        target=22, satisfied_target=24, cold_tol=hot_tol=0.4.
+        """
+        hass = make_hass(cover_positions={"cover.bedroom_vent": 0})
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.COOL)
+        room = parent._rooms[1]
+        parent._room_states[room.name] = RoomState(
+            mode=RoomMode.SECONDARY, is_satisfied=False
+        )
+        parent._sensor_found_for_room[room.name] = True
+
+        # t0: current=26 - well above both targets, unsatisfied, full open.
+        await parent.async_update_room(
+            room,
+            current_temp=26.0,
+            target_temp=22.0,
+            satisfied_target=24.0,
+        )
+        state = parent._room_states[room.name]
+        assert state.is_satisfied is False
+        assert state.cover_pos == 100
+        assert state.reached_target_at is None
+        assert state.reached_max_at is None
+
+        # t1: current=24 - at secondary target. reached_target_at set, still
+        # not satisfied, cover stays open.
+        await parent.async_update_room(
+            room,
+            current_temp=24.0,
+            target_temp=22.0,
+            satisfied_target=24.0,
+        )
+        assert state.is_satisfied is False
+        assert state.reached_target_at is not None
+        assert state.reached_max_at is None
+        assert state.cover_pos == 100
+
+        # t2: current=23 - past secondary, still pulling toward primary.
+        # reached_max_at set, is_satisfied flips True, cover still open.
+        await parent.async_update_room(
+            room,
+            current_temp=23.0,
+            target_temp=22.0,
+            satisfied_target=24.0,
+        )
+        assert state.is_satisfied is True
+        assert state.reached_max_at is not None
+        assert state.cover_pos == 100
+
+        # t3: current=21.5 - overshot primary. diff=-0.5 < min_diff -> cover
+        # closes; remains satisfied.
+        await parent.async_update_room(
+            room,
+            current_temp=21.5,
+            target_temp=22.0,
+            satisfied_target=24.0,
+        )
+        assert state.is_satisfied is True
+        assert state.cover_pos == 0
+
+
 class TestHalfMaxSatisfaction:
     """Satisfaction timeout after 5 minutes at half-max."""
 
