@@ -83,6 +83,15 @@ DEFAULT_NAME = "Home Thermostat"
 # disabled; opening the door re-enables the room immediately
 DOOR_CLOSED_DELAY = timedelta(minutes=5)
 
+# Fan cycling: when the AC is idle but a primary room is drifting toward a
+# real cool/heat cycle and another room holds substantially better air, run
+# the real unit in fan_only to circulate air and delay the compressor cycle.
+FAN_CYCLE_SPREAD_ON = 4.0  # donor must be this much better off to start
+FAN_CYCLE_SPREAD_OFF = 2.0  # stop once the spread collapses below this
+FAN_CYCLE_RECOVERY_MARGIN = 0.3  # stop once the needy room is this far past target
+FAN_CYCLE_MAX_RUNTIME = timedelta(minutes=45)  # hard cap per session
+FAN_CYCLE_COOLDOWN = timedelta(minutes=30)  # no restart after capping out
+
 
 PLATFORM_SCHEMA_COMMON = vol.Schema(
     {
@@ -394,6 +403,9 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             HVACMode.HEAT,
         ]
         self._active = False
+        self._fan_cycle_active = False
+        self._fan_cycle_started_at: datetime | None = None
+        self._fan_cycle_blocked_until: datetime | None = None
         self._temp_lock = asyncio.Lock()
         self._min_temp = min_temp
         self._max_temp = max_temp
@@ -505,6 +517,8 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             return HVACAction.OFF
         if not self._is_device_active:
             return HVACAction.IDLE
+        if self._fan_cycle_active:
+            return HVACAction.FAN
         if self._hvac_mode == HVACMode.COOL:
             return HVACAction.COOLING
         if self._hvac_mode == HVACMode.HEAT:
@@ -522,6 +536,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         """Set hvac mode."""
         if hvac_mode in {HVACMode.OFF, HVACMode.COOL, HVACMode.HEAT, HVACMode.FAN_ONLY}:
             self._hvac_mode = hvac_mode
+            self._end_fan_cycle()
         else:
             _LOGGER.error("Unrecognized hvac mode: %s", hvac_mode)
             return
@@ -585,6 +600,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             manual = manual_state is not None and manual_state.state == STATE_ON
 
             if manual:
+                self._end_fan_cycle()
                 self._reset_all_room_states()
                 return
 
@@ -633,7 +649,10 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     primary_rooms,
                     secondary_rooms,
                     disabled_rooms,
-                    is_active=bool(self._is_device_active),
+                    # a fan-cycling unit reads as "active" but is not
+                    # actually cooling/heating
+                    is_active=bool(self._is_device_active)
+                    and not self._fan_cycle_active,
                 )
 
             for room in disabled_rooms:
@@ -733,18 +752,29 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
 
             fan_speed = self.calculate_fan_speed()
             if not fan_speed:
-                await self.hass.services.async_call(
-                    "climate",
-                    "turn_off",
-                    {"entity_id": self._real_climate_entity_id},
-                    blocking=False,
+                donor_rooms = self._should_fan_cycle(
+                    presence, primary_rooms, secondary_rooms, custom_rooms
                 )
+                if donor_rooms:
+                    await self._async_fan_cycle(donor_rooms)
+                else:
+                    self._end_fan_cycle()
+                    await self.hass.services.async_call(
+                        "climate",
+                        "turn_off",
+                        {"entity_id": self._real_climate_entity_id},
+                        blocking=False,
+                    )
             else:
                 device_active = self._is_device_active
-                if device_active is not None and not device_active:
-                    # we are turning AC on, so mark all rooms as not satisfied
+                if self._fan_cycle_active or (
+                    device_active is not None and not device_active
+                ):
+                    # we are turning AC on (a fan-cycling unit counts as off),
+                    # so mark all rooms as not satisfied
                     for room_state in self._room_states.values():
                         room_state.is_satisfied = False
+                self._end_fan_cycle()
 
                 await self.hass.services.async_call(
                     "climate",
@@ -1043,6 +1073,146 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             return "medium"
         return "auto"
 
+    def _room_temp(self, room: Room) -> float | None:
+        """Read a room's current temperature, or None if unavailable."""
+        sensor_state = self.hass.states.get(room.sensor_entity)
+        if sensor_state is None or sensor_state.state in (
+            STATE_UNAVAILABLE,
+            STATE_UNKNOWN,
+        ):
+            return None
+        return float(sensor_state.state)
+
+    def _should_fan_cycle(
+        self,
+        presence: bool,
+        primary_rooms: list[Room],
+        secondary_rooms: list[Room],
+        custom_rooms: list[Room],
+    ) -> list[Room]:
+        """Decide whether to circulate air by fan cycling the real unit.
+
+        Only called when no primary/custom room demands a real cool/heat
+        cycle. Fan cycling runs when a primary/custom room is at/past its
+        target (drifting toward a real cycle) and another room holds
+        substantially better air. Returns the donor rooms whose covers should
+        open while cycling, or an empty list when fan cycling should not run.
+        """
+        if self._hvac_mode not in {HVACMode.COOL, HVACMode.HEAT}:
+            return []
+        if not presence:
+            return []
+
+        now = datetime.now()
+        if (
+            self._fan_cycle_blocked_until is not None
+            and now < self._fan_cycle_blocked_until
+        ):
+            return []
+
+        if self._fan_cycle_active:
+            if (
+                self._fan_cycle_started_at is not None
+                and now - self._fan_cycle_started_at >= FAN_CYCLE_MAX_RUNTIME
+            ):
+                # room temps may never converge, so cap each session and
+                # block an immediate restart
+                self._fan_cycle_blocked_until = now + FAN_CYCLE_COOLDOWN
+                return []
+            # sticky: keep running until the needy room recovers past the
+            # margin or the spread collapses
+            needy_margin = FAN_CYCLE_RECOVERY_MARGIN
+            required_spread = FAN_CYCLE_SPREAD_OFF
+        else:
+            needy_margin = 0.0
+            required_spread = FAN_CYCLE_SPREAD_ON
+
+        cooling = self._hvac_mode == HVACMode.COOL
+
+        # find the worst-off "needy" room among primaries (parent target)
+        # and custom rooms (child target)
+        needy_candidates = [(room, self._target_temp) for room in primary_rooms]
+        needy_candidates += [
+            (
+                room,
+                self._child_thermostats[room.name].target_temperature
+                or self._target_temp,
+            )
+            for room in custom_rooms
+        ]
+        worst_temp: float | None = None
+        for room, target in needy_candidates:
+            current_temp = self._room_temp(room)
+            if current_temp is None or target is None:
+                continue
+            if cooling:
+                if current_temp >= target - needy_margin:
+                    worst_temp = (
+                        current_temp
+                        if worst_temp is None
+                        else max(worst_temp, current_temp)
+                    )
+            elif current_temp <= target + needy_margin:
+                worst_temp = (
+                    current_temp
+                    if worst_temp is None
+                    else min(worst_temp, current_temp)
+                )
+
+        if worst_temp is None:
+            return []
+
+        donors = []
+        for room in [*primary_rooms, *secondary_rooms, *custom_rooms]:
+            current_temp = self._room_temp(room)
+            if current_temp is None:
+                continue
+            if cooling:
+                if current_temp <= worst_temp - required_spread:
+                    donors.append(room)
+            elif current_temp >= worst_temp + required_spread:
+                donors.append(room)
+        return donors
+
+    async def _async_fan_cycle(self, donor_rooms: list[Room]) -> None:
+        """Run the real unit in fan_only to circulate air between rooms."""
+        if not self._fan_cycle_active:
+            self._fan_cycle_active = True
+            self._fan_cycle_started_at = datetime.now()
+
+        await self.hass.services.async_call(
+            "climate",
+            "set_fan_mode",
+            {"entity_id": self._real_climate_entity_id, "fan_mode": "auto"},
+            blocking=False,
+        )
+
+        await self.hass.services.async_call(
+            "climate",
+            "set_hvac_mode",
+            {
+                "entity_id": self._real_climate_entity_id,
+                "hvac_mode": HVACMode.FAN_ONLY.value,
+            },
+            blocking=False,
+        )
+
+        # open donor covers so air actually exchanges; needy rooms are
+        # already open from the normal room update pass
+        for room in donor_rooms:
+            self._room_states[room.name].cover_pos = 100
+            await self.hass.services.async_call(
+                "cover",
+                "set_cover_position",
+                {"entity_id": room.cover_entity, "position": 100},
+                blocking=False,
+            )
+
+    def _end_fan_cycle(self) -> None:
+        """Clear fan cycling state; the caller drives the unit and covers."""
+        self._fan_cycle_active = False
+        self._fan_cycle_started_at = None
+
     async def _async_update_child_thermostats(self):
         """Update child thermostat state."""
         for room in self._rooms:
@@ -1131,10 +1301,14 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 f"{room.name}: {mode} {satisfied}{light}{door} {last_str}".strip()
             )
 
+        value = "   ".join(summaries)
+        if self._fan_cycle_active:
+            value = f"≋ {value}"
+
         await self.hass.services.async_call(
             input_text.DOMAIN,
             "set_value",
-            {"entity_id": self._output_entity_id, "value": "   ".join(summaries)},
+            {"entity_id": self._output_entity_id, "value": value},
             blocking=False,
         )
 
