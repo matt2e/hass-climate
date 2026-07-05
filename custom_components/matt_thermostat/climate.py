@@ -256,7 +256,7 @@ class Room:
 
     Attributes:
         name: The name of the room.
-        sensor_entity: The entity ID of the temperature sensor for the room.
+        sensor_entities: The entity IDs of the temperature sensors for the room.
         cover_entity: The entity ID of the cover (e.g., blinds) for the room.
         light_entity: The entity ID of the light for the room, or None if not used.
         standard_mode: The standard mode for the room.
@@ -265,7 +265,7 @@ class Room:
     """
 
     name: str
-    sensor_entity: str
+    sensor_entities: list[str]
     cover_entity: str
     light_entity: str | None
     standard_mode: RoomMode
@@ -311,9 +311,16 @@ class Room:
                 f"expected one of {RoomMode.PRIMARY}, "
                 f"{RoomMode.SECONDARY}, {RoomMode.DISABLED}"
             )
+        sensor_data = data["sensor"]
+        if isinstance(sensor_data, list):
+            sensor_entities = [str(sensor) for sensor in sensor_data]
+        else:
+            sensor_entities = [str(sensor_data)]
+        if not sensor_entities:
+            raise ValueError(f"Room '{name}' must have at least one sensor")
         return Room(
             name=name,
-            sensor_entity=str(data["sensor"]),
+            sensor_entities=sensor_entities,
             cover_entity=str(data["cover"]),
             light_entity=data.get("light"),
             standard_mode=mode,
@@ -551,6 +558,25 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         await self._async_control_real_climate()
         self.async_write_ha_state()
 
+    def _get_room_temp(self, room: Room) -> float | None:
+        """Return the room temperature as the average of its available sensors.
+
+        Sensors that are missing, unavailable or unknown are ignored.
+        Returns None if no sensor has a usable reading.
+        """
+        temps: list[float] = []
+        for sensor_entity in room.sensor_entities:
+            sensor_state = self.hass.states.get(sensor_entity)
+            if sensor_state is None or sensor_state.state in (
+                STATE_UNAVAILABLE,
+                STATE_UNKNOWN,
+            ):
+                continue
+            temps.append(float(sensor_state.state))
+        if not temps:
+            return None
+        return sum(temps) / len(temps)
+
     async def _async_control_real_climate(self, force: bool = False) -> None:
         """Check if we need to turn heating on or off."""
 
@@ -643,26 +669,18 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                         most_extreme_temperature, target_temp
                     )
 
-                sensor_state = self.hass.states.get(room.sensor_entity)
-                if sensor_state is None or sensor_state.state in (
-                    STATE_UNAVAILABLE,
-                    STATE_UNKNOWN,
-                ):
+                current_temp = self._get_room_temp(room)
+                if current_temp is None:
                     continue
-                current_temp = float(sensor_state.state)
 
                 await self.async_update_room(
                     room=room, current_temp=current_temp, target_temp=target_temp
                 )
 
             for room in primary_rooms:
-                sensor_state = self.hass.states.get(room.sensor_entity)
-                if sensor_state is None or sensor_state.state in (
-                    STATE_UNAVAILABLE,
-                    STATE_UNKNOWN,
-                ):
+                current_temp = self._get_room_temp(room)
+                if current_temp is None:
                     continue
-                current_temp = float(sensor_state.state)
                 if primary_current_temp is None:
                     primary_current_temp = current_temp
                 elif self._hvac_mode in {HVACMode.COOL, HVACMode.FAN_ONLY}:
@@ -704,13 +722,9 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 for room in self._rooms:
                     if room.standard_mode != RoomMode.PRIMARY:
                         continue
-                    sensor_state = self.hass.states.get(room.sensor_entity)
-                    if sensor_state is None or sensor_state.state in (
-                        STATE_UNAVAILABLE,
-                        STATE_UNKNOWN,
-                    ):
+                    temp = self._get_room_temp(room)
+                    if temp is None:
                         continue
-                    temp = float(sensor_state.state)
                     display_temp = (
                         temp if display_temp is None else max(display_temp, temp)
                     )
@@ -762,13 +776,9 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
 
         room_state.mode = mode
 
-        sensor_state = self.hass.states.get(room.sensor_entity)
-        if sensor_state is None or sensor_state.state in (
-            STATE_UNAVAILABLE,
-            STATE_UNKNOWN,
-        ):
+        current_temp = self._get_room_temp(room)
+        if current_temp is None:
             return
-        current_temp = float(sensor_state.state)
 
         # we need to update whether the room is satisfied based on
         # if it is in the target temp range
@@ -857,13 +867,9 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         """Update secondary rooms when other rooms need the AC on."""
         target_temp_secondary = self._target_secondary_temp()
         for room in secondary_rooms:
-            sensor_state = self.hass.states.get(room.sensor_entity)
-            if sensor_state is None or sensor_state.state in (
-                STATE_UNAVAILABLE,
-                STATE_UNKNOWN,
-            ):
+            current_temp = self._get_room_temp(room)
+            if current_temp is None:
                 continue
-            current_temp = float(sensor_state.state)
 
             # Pull secondary rooms toward the primary target while the AC is
             # already running for primaries, but judge "satisfied" at the
@@ -998,13 +1004,9 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             if child_thermo is None:
                 continue
 
-            sensor_state = self.hass.states.get(room.sensor_entity)
-            if sensor_state is None or sensor_state.state in (
-                STATE_UNAVAILABLE,
-                STATE_UNKNOWN,
-            ):
+            current_temp = self._get_room_temp(room)
+            if current_temp is None:
                 continue
-            current_temp = float(sensor_state.state)
             cover_state = self.hass.states.get(room.cover_entity)
             cover_pos = (
                 cover_state.attributes.get("current_position", 0) if cover_state else 0
@@ -1113,13 +1115,9 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             # Check if any room's temp warrants forcing the AC on
             any_room_needs_ac = False
             for room in primary_rooms:
-                sensor_state = self.hass.states.get(room.sensor_entity)
-                if sensor_state is None or sensor_state.state in (
-                    STATE_UNAVAILABLE,
-                    STATE_UNKNOWN,
-                ):
+                current_temp = self._get_room_temp(room)
+                if current_temp is None:
                     continue
-                current_temp = float(sensor_state.state)
                 target = self._target_temp
                 if (is_cooling and current_temp >= target) or (
                     not is_cooling and current_temp <= target
@@ -1145,13 +1143,9 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 any_past_target = False
                 any_valid_reading = False
                 for room in primary_rooms:
-                    sensor_state = self.hass.states.get(room.sensor_entity)
-                    if sensor_state is None or sensor_state.state in (
-                        STATE_UNAVAILABLE,
-                        STATE_UNKNOWN,
-                    ):
+                    current_temp = self._get_room_temp(room)
+                    if current_temp is None:
                         continue
-                    current_temp = float(sensor_state.state)
                     any_valid_reading = True
                     if (not is_cooling and current_temp > self._target_temp) or (
                         is_cooling and current_temp < self._target_temp

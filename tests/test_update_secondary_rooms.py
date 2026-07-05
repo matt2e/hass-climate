@@ -132,11 +132,11 @@ class TestUpdateSecondaryRooms:
         parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.COOL)
         room = _bedroom(parent)
 
-        # Override the bedroom sensor to be unavailable.
+        # Override the bedroom sensors to be unavailable.
         original_get = hass.states.get
         hass.states.get = lambda eid: (
             make_state(STATE_UNAVAILABLE)
-            if eid == room.sensor_entity
+            if eid in room.sensor_entities
             else original_get(eid)
         )
 
