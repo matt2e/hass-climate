@@ -78,6 +78,7 @@ def make_hass(
     room_temps: dict[str, float] | None = None,
     cover_positions: dict[str, int] | None = None,
     light_states: dict[str, str] | None = None,
+    door_states: dict[str, str] | None = None,
     real_climate_action: str = HVACAction.IDLE,
     real_climate_state: str = HVACMode.OFF,
 ) -> MagicMock:
@@ -90,6 +91,7 @@ def make_hass(
     temps = room_temps or {}
     covers = cover_positions or {}
     lights = light_states or {}
+    doors = door_states or {}
 
     state_map: dict[str, State] = {
         "input_boolean.presence": make_state(presence),
@@ -109,6 +111,9 @@ def make_hass(
 
     for entity_id, light_st in lights.items():
         state_map[entity_id] = make_state(light_st)
+
+    for entity_id, door_st in doors.items():
+        state_map[entity_id] = make_state(door_st)
 
     hass.states = MagicMock()
     hass.states.get = lambda eid: state_map.get(eid)

@@ -79,6 +79,10 @@ _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_NAME = "Home Thermostat"
 
+# how long a door must read continuously closed before a secondary room is
+# disabled; opening the door re-enables the room immediately
+DOOR_CLOSED_DELAY = timedelta(minutes=5)
+
 
 PLATFORM_SCHEMA_COMMON = vol.Schema(
     {
@@ -248,6 +252,11 @@ class RoomState:
     light_on: bool = False
     raw_light_on_at: datetime | None = None
     raw_light_off_at: datetime | None = None
+    # debounced door-closed value, driven by raw_door_closed_at
+    door_closed: bool = False
+    raw_door_closed_at: datetime | None = None
+    # set only when the secondary gate converts SECONDARY -> DISABLED
+    disabled_by_door: bool = False
 
 
 @dataclass
@@ -262,6 +271,9 @@ class Room:
         standard_mode: The standard mode for the room.
         bedtime_mode: The bedtime mode for the room.
         allows_override: Whether custom thermostats are made for this room.
+        door_entity: The entity ID of the door sensor for the room, or None if
+            not used. When set and the (debounced) door reads closed, a room
+            resolving to SECONDARY is disabled instead.
     """
 
     name: str
@@ -273,6 +285,7 @@ class Room:
     allows_override: bool
     is_overflow: bool
     vents: int
+    door_entity: str | None
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> Room:
@@ -321,6 +334,7 @@ class Room:
             allows_override=bool(data.get("allows_override", False)),
             is_overflow=bool(data.get("is_overflow", False)),
             vents=int(data.get("vents", 1)),
+            door_entity=data.get("door"),
         )
 
 
@@ -808,14 +822,19 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             ]:
                 return RoomMode.CUSTOM
 
+        room_state = self._room_states[room.name]
+        self._update_door_state(room, room_state)
+        # recomputed by _gate_secondary; cleared here so config/away disables
+        # are never mislabeled as door-disabled
+        room_state.disabled_by_door = False
+
         bedtime_state = self.hass.states.get(self._bedtime_entity_id)
         bedtime = bedtime_state is not None and bedtime_state.state == STATE_ON
         mode = room.bedtime_mode if bedtime else room.standard_mode
 
         if mode == RoomMode.SECONDARY:
-            return RoomMode.SECONDARY
+            return self._gate_secondary(room_state)
         if mode == RoomMode.PRIMARY:
-            room_state = self._room_states[room.name]
             if room.light_entity:
                 light_state = self.hass.states.get(room.light_entity)
                 if light_state is None or light_state.state in [
@@ -840,11 +859,44 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                         room_state.light_on = True
 
             if room.light_entity and not bedtime and not room_state.light_on:
-                return RoomMode.SECONDARY
+                return self._gate_secondary(room_state)
 
             return RoomMode.PRIMARY
 
         return RoomMode.DISABLED
+
+    def _update_door_state(self, room: Room, room_state: RoomState) -> None:
+        """Debounce raw door sensor into room_state.door_closed.
+
+        Fail-open: missing/unavailable/unknown sensor is treated as OPEN.
+        Asymmetric: closing requires DOOR_CLOSED_DELAY of continuous-closed
+        before it counts; opening re-enables immediately.
+        """
+        if not room.door_entity:
+            room_state.door_closed = False
+            return
+
+        door_state = self.hass.states.get(room.door_entity)
+        # device_class "door": off = closed. Everything else (on/open,
+        # unavailable, unknown, missing) => treat as OPEN (fail-open).
+        raw_closed = door_state is not None and door_state.state == STATE_OFF
+
+        if raw_closed:
+            if room_state.raw_door_closed_at is None:
+                room_state.raw_door_closed_at = datetime.now()
+            elif room_state.raw_door_closed_at <= datetime.now() - DOOR_CLOSED_DELAY:
+                room_state.door_closed = True
+        else:
+            room_state.raw_door_closed_at = None
+            room_state.door_closed = False
+
+    def _gate_secondary(self, room_state: RoomState) -> RoomMode:
+        """Disable a secondary room when its door is (debounced) closed."""
+        if room_state.door_closed:
+            room_state.disabled_by_door = True
+            return RoomMode.DISABLED
+        room_state.disabled_by_door = False
+        return RoomMode.SECONDARY
 
     def _target_secondary_temp(self) -> float | None:
         if self.hvac_mode == HVACMode.HEAT:
@@ -1043,7 +1095,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
 
             # mode
             if state.mode == RoomMode.DISABLED:
-                mode = "×"
+                mode = "⊘" if state.disabled_by_door else "×"
             elif state.mode == RoomMode.PRIMARY:
                 mode = "①"
             elif state.mode == RoomMode.SECONDARY:
@@ -1062,6 +1114,12 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             else:
                 light = ""
 
+            # door
+            if room.door_entity is not None:
+                door = "▮" if state.door_closed else "▯"
+            else:
+                door = ""
+
             # when was target reached
             last_str = (
                 f"{int((now - state.reached_target_at).total_seconds()) // 60}mins"
@@ -1070,7 +1128,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             )
 
             summaries.append(
-                f"{room.name}: {mode} {satisfied}{light} {last_str}".strip()
+                f"{room.name}: {mode} {satisfied}{light}{door} {last_str}".strip()
             )
 
         await self.hass.services.async_call(

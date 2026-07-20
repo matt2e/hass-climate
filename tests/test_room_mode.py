@@ -5,9 +5,17 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from homeassistant.components.climate import HVACMode
-from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE
+from homeassistant.const import (
+    STATE_OFF,
+    STATE_ON,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+)
 
-from custom_components.matt_thermostat.climate import RoomMode
+from custom_components.matt_thermostat.climate import (
+    DOOR_CLOSED_DELAY,
+    RoomMode,
+)
 
 from .conftest import make_hass, make_parent, make_rooms
 
@@ -147,6 +155,241 @@ class TestCalculateRoomMode:
         parent._room_states[rooms[0].name].light_on = False
         result = parent._calculate_room_mode(rooms[0], presence=True)
         assert result == RoomMode.SECONDARY
+
+
+class TestDoorGatedSecondary:
+    DOOR = "binary_sensor.bedroom_door"
+
+    def _long_ago(self):
+        return datetime.now() - (DOOR_CLOSED_DELAY + timedelta(minutes=1))
+
+    def test_secondary_door_closed_disables(self):
+        hass = make_hass(
+            bedtime=STATE_OFF,
+            door_states={self.DOOR: STATE_OFF},
+        )
+        parent = make_parent(hass, hvac_mode=HVACMode.COOL)
+        rooms = parent._rooms
+        rooms[1].door_entity = self.DOOR
+        parent._room_states[rooms[1].name].raw_door_closed_at = self._long_ago()
+
+        result = parent._calculate_room_mode(rooms[1], presence=True)
+        assert result == RoomMode.DISABLED
+        assert parent._room_states[rooms[1].name].disabled_by_door is True
+
+    def test_secondary_door_open_stays_secondary(self):
+        hass = make_hass(
+            bedtime=STATE_OFF,
+            door_states={self.DOOR: STATE_ON},
+        )
+        parent = make_parent(hass, hvac_mode=HVACMode.COOL)
+        rooms = parent._rooms
+        rooms[1].door_entity = self.DOOR
+        # even if a stale timer/flag existed, open must win
+        parent._room_states[rooms[1].name].door_closed = True
+        parent._room_states[rooms[1].name].raw_door_closed_at = self._long_ago()
+
+        result = parent._calculate_room_mode(rooms[1], presence=True)
+        assert result == RoomMode.SECONDARY
+        assert parent._room_states[rooms[1].name].disabled_by_door is False
+
+    def test_secondary_no_door_sensor_stays_secondary(self):
+        hass = make_hass(bedtime=STATE_OFF)
+        parent = make_parent(hass, hvac_mode=HVACMode.COOL)
+        rooms = parent._rooms
+        assert rooms[1].door_entity is None
+        result = parent._calculate_room_mode(rooms[1], presence=True)
+        assert result == RoomMode.SECONDARY
+
+    def test_secondary_door_unavailable_treated_as_open(self):
+        for door_value in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            hass = make_hass(
+                bedtime=STATE_OFF,
+                door_states={self.DOOR: door_value},
+            )
+            parent = make_parent(hass, hvac_mode=HVACMode.COOL)
+            rooms = parent._rooms
+            rooms[1].door_entity = self.DOOR
+            parent._room_states[rooms[1].name].raw_door_closed_at = self._long_ago()
+
+            result = parent._calculate_room_mode(rooms[1], presence=True)
+            assert result == RoomMode.SECONDARY
+
+    def test_primary_door_closed_stays_primary(self):
+        hass = make_hass(
+            bedtime=STATE_OFF,
+            light_states={"light.living_room": STATE_ON},
+            door_states={self.DOOR: STATE_OFF},
+        )
+        parent = make_parent(hass, hvac_mode=HVACMode.COOL)
+        rooms = parent._rooms
+        rooms[0].door_entity = self.DOOR
+        parent._room_states[rooms[0].name].raw_light_on_at = datetime.now() - timedelta(
+            minutes=3
+        )
+        parent._room_states[rooms[0].name].light_on = True
+        parent._room_states[rooms[0].name].raw_door_closed_at = self._long_ago()
+
+        result = parent._calculate_room_mode(rooms[0], presence=True)
+        assert result == RoomMode.PRIMARY
+
+    def test_bedtime_primary_door_closed_stays_primary(self):
+        """Bedroom at night (bedtime_mode=primary) is never gated."""
+        hass = make_hass(
+            bedtime=STATE_ON,
+            door_states={self.DOOR: STATE_OFF},
+        )
+        parent = make_parent(hass, hvac_mode=HVACMode.COOL)
+        rooms = parent._rooms
+        rooms[1].door_entity = self.DOOR
+        parent._room_states[rooms[1].name].raw_door_closed_at = self._long_ago()
+
+        result = parent._calculate_room_mode(rooms[1], presence=True)
+        assert result == RoomMode.PRIMARY
+
+    def test_light_downgraded_secondary_door_closed_disables(self):
+        """Second gate point: a lights-off daytime primary with a closed door."""
+        hass = make_hass(
+            bedtime=STATE_OFF,
+            light_states={"light.living_room": STATE_OFF},
+            door_states={self.DOOR: STATE_OFF},
+        )
+        parent = make_parent(hass, hvac_mode=HVACMode.COOL)
+        rooms = parent._rooms
+        rooms[0].door_entity = self.DOOR
+        parent._room_states[rooms[0].name].raw_light_off_at = (
+            datetime.now() - timedelta(minutes=3)
+        )
+        parent._room_states[rooms[0].name].light_on = False
+        parent._room_states[rooms[0].name].raw_door_closed_at = self._long_ago()
+
+        result = parent._calculate_room_mode(rooms[0], presence=True)
+        assert result == RoomMode.DISABLED
+        assert parent._room_states[rooms[0].name].disabled_by_door is True
+
+    def test_light_downgraded_secondary_door_open_secondary(self):
+        hass = make_hass(
+            bedtime=STATE_OFF,
+            light_states={"light.living_room": STATE_OFF},
+            door_states={self.DOOR: STATE_ON},
+        )
+        parent = make_parent(hass, hvac_mode=HVACMode.COOL)
+        rooms = parent._rooms
+        rooms[0].door_entity = self.DOOR
+        parent._room_states[rooms[0].name].raw_light_off_at = (
+            datetime.now() - timedelta(minutes=3)
+        )
+        parent._room_states[rooms[0].name].light_on = False
+
+        result = parent._calculate_room_mode(rooms[0], presence=True)
+        assert result == RoomMode.SECONDARY
+
+    def test_door_recently_closed_stays_secondary(self):
+        """Closed for < DOOR_CLOSED_DELAY — not yet disabled."""
+        hass = make_hass(
+            bedtime=STATE_OFF,
+            door_states={self.DOOR: STATE_OFF},
+        )
+        parent = make_parent(hass, hvac_mode=HVACMode.COOL)
+        rooms = parent._rooms
+        rooms[1].door_entity = self.DOOR
+        parent._room_states[rooms[1].name].raw_door_closed_at = (
+            datetime.now() - timedelta(seconds=30)
+        )
+
+        result = parent._calculate_room_mode(rooms[1], presence=True)
+        assert result == RoomMode.SECONDARY
+        assert parent._room_states[rooms[1].name].door_closed is False
+
+    def test_door_closed_long_enough_disables(self):
+        """Debounce flips door_closed True once the delay has elapsed."""
+        hass = make_hass(
+            bedtime=STATE_OFF,
+            door_states={self.DOOR: STATE_OFF},
+        )
+        parent = make_parent(hass, hvac_mode=HVACMode.COOL)
+        rooms = parent._rooms
+        rooms[1].door_entity = self.DOOR
+        parent._room_states[rooms[1].name].raw_door_closed_at = self._long_ago()
+
+        result = parent._calculate_room_mode(rooms[1], presence=True)
+        assert parent._room_states[rooms[1].name].door_closed is True
+        assert result == RoomMode.DISABLED
+
+    def test_door_open_reenables_immediately(self):
+        hass = make_hass(
+            bedtime=STATE_OFF,
+            door_states={self.DOOR: STATE_ON},
+        )
+        parent = make_parent(hass, hvac_mode=HVACMode.COOL)
+        rooms = parent._rooms
+        rooms[1].door_entity = self.DOOR
+        parent._room_states[rooms[1].name].door_closed = True
+        parent._room_states[rooms[1].name].raw_door_closed_at = self._long_ago()
+
+        result = parent._calculate_room_mode(rooms[1], presence=True)
+        assert parent._room_states[rooms[1].name].door_closed is False
+        assert parent._room_states[rooms[1].name].raw_door_closed_at is None
+        assert result == RoomMode.SECONDARY
+
+
+class TestUpdateDoorState:
+    DOOR = "binary_sensor.bedroom_door"
+
+    def test_no_entity_is_open(self):
+        parent = make_parent(hvac_mode=HVACMode.COOL)
+        room = parent._rooms[1]
+        room.door_entity = None
+        state = parent._room_states[room.name]
+        state.door_closed = True
+        parent._update_door_state(room, state)
+        assert state.door_closed is False
+
+    def test_sustained_closed_accrues_then_flips(self):
+        hass = make_hass(door_states={self.DOOR: STATE_OFF})
+        parent = make_parent(hass, hvac_mode=HVACMode.COOL)
+        room = parent._rooms[1]
+        room.door_entity = self.DOOR
+        state = parent._room_states[room.name]
+
+        # first observation just starts the timer
+        parent._update_door_state(room, state)
+        assert state.raw_door_closed_at is not None
+        assert state.door_closed is False
+
+        # backdate the timer past the delay, then observe again
+        state.raw_door_closed_at = datetime.now() - (
+            DOOR_CLOSED_DELAY + timedelta(minutes=1)
+        )
+        parent._update_door_state(room, state)
+        assert state.door_closed is True
+
+    def test_open_clears_timer_immediately(self):
+        hass = make_hass(door_states={self.DOOR: STATE_ON})
+        parent = make_parent(hass, hvac_mode=HVACMode.COOL)
+        room = parent._rooms[1]
+        room.door_entity = self.DOOR
+        state = parent._room_states[room.name]
+        state.door_closed = True
+        state.raw_door_closed_at = datetime.now() - timedelta(minutes=10)
+
+        parent._update_door_state(room, state)
+        assert state.door_closed is False
+        assert state.raw_door_closed_at is None
+
+    def test_unavailable_is_open(self):
+        for door_value in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            hass = make_hass(door_states={self.DOOR: door_value})
+            parent = make_parent(hass, hvac_mode=HVACMode.COOL)
+            room = parent._rooms[1]
+            room.door_entity = self.DOOR
+            state = parent._room_states[room.name]
+            state.door_closed = True
+            state.raw_door_closed_at = datetime.now() - timedelta(minutes=10)
+
+            parent._update_door_state(room, state)
+            assert state.door_closed is False
+            assert state.raw_door_closed_at is None
 
 
 class TestTransitionRoomToMode:

@@ -36,6 +36,7 @@ class TestRoomFromDict:
         assert room.allows_override is True
         assert room.is_overflow is False
         assert room.vents == 2
+        assert room.door_entity is None
 
     def test_minimal_room(self):
         data = {
@@ -51,6 +52,30 @@ class TestRoomFromDict:
         assert room.allows_override is False
         assert room.is_overflow is False
         assert room.vents == 1
+        assert room.door_entity is None
+
+    def test_door_field_parsed(self):
+        data = {
+            "name": "Bedroom",
+            "sensor": "sensor.bedroom_temp",
+            "cover": "cover.bedroom_vent",
+            "mode": "secondary",
+            "bedtime_mode": "primary",
+            "door": "binary_sensor.bedroom_door",
+        }
+        room = Room.from_dict(data)
+        assert room.door_entity == "binary_sensor.bedroom_door"
+
+    def test_door_field_absent_defaults_none(self):
+        data = {
+            "name": "Bedroom",
+            "sensor": "sensor.bedroom_temp",
+            "cover": "cover.bedroom_vent",
+            "mode": "secondary",
+            "bedtime_mode": "primary",
+        }
+        room = Room.from_dict(data)
+        assert room.door_entity is None
 
     def test_missing_name_raises(self):
         with pytest.raises(ValueError):
