@@ -92,6 +92,11 @@ FAN_CYCLE_RECOVERY_MARGIN = 0.3  # stop once the needy room is this far past tar
 FAN_CYCLE_MAX_RUNTIME = timedelta(minutes=45)  # hard cap per session
 FAN_CYCLE_COOLDOWN = timedelta(minutes=30)  # no restart after capping out
 
+# How long a room's temperature sensor may stay unavailable/unknown before we
+# stop trusting the room and neutralize it (see _read_demand_room_temp). Brief
+# dropouts under this window are tolerated so the room keeps its demand.
+SENSOR_UNAVAILABLE_GRACE = timedelta(minutes=5)
+
 
 PLATFORM_SCHEMA_COMMON = vol.Schema(
     {
@@ -266,6 +271,8 @@ class RoomState:
     raw_door_closed_at: datetime | None = None
     # set only when the secondary gate converts SECONDARY -> DISABLED
     disabled_by_door: bool = False
+    # tracks when the room's sensor first went unavailable; None while readable
+    sensor_unavailable_since: datetime | None = None
 
 
 @dataclass
@@ -676,26 +683,18 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                         most_extreme_temperature, target_temp
                     )
 
-                sensor_state = self.hass.states.get(room.sensor_entity)
-                if sensor_state is None or sensor_state.state in (
-                    STATE_UNAVAILABLE,
-                    STATE_UNKNOWN,
-                ):
+                current_temp = await self._read_demand_room_temp(room)
+                if current_temp is None:
                     continue
-                current_temp = float(sensor_state.state)
 
                 await self.async_update_room(
                     room=room, current_temp=current_temp, target_temp=target_temp
                 )
 
             for room in primary_rooms:
-                sensor_state = self.hass.states.get(room.sensor_entity)
-                if sensor_state is None or sensor_state.state in (
-                    STATE_UNAVAILABLE,
-                    STATE_UNKNOWN,
-                ):
+                current_temp = await self._read_demand_room_temp(room)
+                if current_temp is None:
                     continue
-                current_temp = float(sensor_state.state)
                 if primary_current_temp is None:
                     primary_current_temp = current_temp
                 elif self._hvac_mode in {HVACMode.COOL, HVACMode.FAN_ONLY}:
@@ -937,17 +936,53 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             return min(self._target_temp + 2, 28)
         return self._target_temp
 
+    async def _read_demand_room_temp(self, room: Room) -> float | None:
+        """Read a room's sensor for the airflow-gating loops.
+
+        Returns the current temperature, or None if the sensor is
+        unavailable/unknown. Tracks how long the sensor has been out and,
+        once the grace period lapses, neutralizes the room so a dead sensor
+        can no longer hold the AC on (primary/custom) or a vent open
+        (secondary).
+        """
+        room_state = self._room_states[room.name]
+        sensor_state = self.hass.states.get(room.sensor_entity)
+        if sensor_state is None or sensor_state.state in (
+            STATE_UNAVAILABLE,
+            STATE_UNKNOWN,
+        ):
+            if room_state.sensor_unavailable_since is None:
+                room_state.sensor_unavailable_since = datetime.now()
+            elif (
+                datetime.now() - room_state.sensor_unavailable_since
+                >= SENSOR_UNAVAILABLE_GRACE
+            ):
+                await self._neutralize_room(room)
+            return None
+
+        room_state.sensor_unavailable_since = None
+        return float(sensor_state.state)
+
+    async def _neutralize_room(self, room: Room) -> None:
+        """Stop a room with a dead sensor from generating AC demand."""
+        room_state = self._room_states[room.name]
+        room_state.is_satisfied = True
+        if room_state.cover_pos != 0:
+            room_state.cover_pos = 0
+            await self.hass.services.async_call(
+                "cover",
+                "set_cover_position",
+                {"entity_id": room.cover_entity, "position": 0},
+                blocking=False,
+            )
+
     async def async_update_secondary_rooms(self, secondary_rooms: list[Room]) -> None:
         """Update secondary rooms when other rooms need the AC on."""
         target_temp_secondary = self._target_secondary_temp()
         for room in secondary_rooms:
-            sensor_state = self.hass.states.get(room.sensor_entity)
-            if sensor_state is None or sensor_state.state in (
-                STATE_UNAVAILABLE,
-                STATE_UNKNOWN,
-            ):
+            current_temp = await self._read_demand_room_temp(room)
+            if current_temp is None:
                 continue
-            current_temp = float(sensor_state.state)
 
             # Pull secondary rooms toward the primary target while the AC is
             # already running for primaries, but judge "satisfied" at the

@@ -11,6 +11,7 @@ from homeassistant.const import (
     PRECISION_TENTHS,
     STATE_OFF,
     STATE_ON,
+    STATE_UNAVAILABLE,
     UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant, State
@@ -79,6 +80,7 @@ def make_hass(
     cover_positions: dict[str, int] | None = None,
     light_states: dict[str, str] | None = None,
     door_states: dict[str, str] | None = None,
+    unavailable_sensors: list[str] | None = None,
     real_climate_action: str = HVACAction.IDLE,
     real_climate_state: str = HVACMode.OFF,
 ) -> MagicMock:
@@ -114,6 +116,9 @@ def make_hass(
 
     for entity_id, door_st in doors.items():
         state_map[entity_id] = make_state(door_st)
+
+    for entity_id in unavailable_sensors or []:
+        state_map[entity_id] = make_state(STATE_UNAVAILABLE)
 
     hass.states = MagicMock()
     hass.states.get = lambda eid: state_map.get(eid)
