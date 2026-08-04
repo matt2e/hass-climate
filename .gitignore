@@ -206,3 +206,8 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 .DS_Store
+
+# Hermit
+#  bin/ holds the committed shims/activation scripts; .hermit/ is machine-local
+#  package cache and state that must not be checked in.
+.hermit/
