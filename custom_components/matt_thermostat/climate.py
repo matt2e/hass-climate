@@ -50,6 +50,7 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.reload import async_setup_reload_service
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
+from homeassistant.util import dt as dt_util
 
 from .child_thermostat import ChildThermostat
 from .const import (
@@ -96,6 +97,14 @@ FAN_CYCLE_COOLDOWN = timedelta(minutes=30)  # no restart after capping out
 # stop trusting the room and neutralize it (see _read_demand_room_temp). Brief
 # dropouts under this window are tolerated so the room keeps its demand.
 SENSOR_UNAVAILABLE_GRACE = timedelta(minutes=5)
+
+# A sensor can keep publishing its last value long after it has actually
+# stopped updating (dead battery, lost connectivity) without ever going
+# unavailable. Once its state has not been written (last_reported) for longer
+# than this, treat the reading as stale and neutralize the room until a fresh
+# value arrives. The threshold sits above the slowest common battery-sensor
+# heartbeat so healthy sensors in stable rooms are not false-triggered.
+SENSOR_STALE_TIMEOUT = timedelta(minutes=20)
 
 
 PLATFORM_SCHEMA_COMMON = vol.Schema(
@@ -273,6 +282,9 @@ class RoomState:
     disabled_by_door: bool = False
     # tracks when the room's sensor first went unavailable; None while readable
     sensor_unavailable_since: datetime | None = None
+    # true once a stale sensor has been logged; cleared when it reports again,
+    # so each outage warns exactly once
+    sensor_stale_warned: bool = False
 
 
 @dataclass
@@ -940,10 +952,12 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         """Read a room's sensor for the airflow-gating loops.
 
         Returns the current temperature, or None if the sensor is
-        unavailable/unknown. Tracks how long the sensor has been out and,
-        once the grace period lapses, neutralizes the room so a dead sensor
-        can no longer hold the AC on (primary/custom) or a vent open
-        (secondary).
+        unavailable/unknown or has gone stale. Tracks how long the sensor has
+        been out and, once the grace period lapses, neutralizes the room so a
+        dead sensor can no longer hold the AC on (primary/custom) or a vent
+        open (secondary). A sensor that keeps its last numeric value but stops
+        reporting (last_reported older than SENSOR_STALE_TIMEOUT) is treated
+        the same way.
         """
         room_state = self._room_states[room.name]
         sensor_state = self.hass.states.get(room.sensor_entity)
@@ -960,7 +974,32 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 await self._neutralize_room(room)
             return None
 
+        # A readable state means the sensor is no longer unavailable.
         room_state.sensor_unavailable_since = None
+
+        # last_reported is bumped on every write, even when the value is
+        # unchanged, so its age is exactly how long the sensor has been silent.
+        # It is tz-aware UTC, so compare against dt_util.utcnow() (naive
+        # datetime.now() would raise). If it stays silent past the timeout,
+        # stop trusting the frozen value and neutralize the room.
+        last_reported = sensor_state.last_reported
+        if (
+            last_reported is not None
+            and dt_util.utcnow() - last_reported >= SENSOR_STALE_TIMEOUT
+        ):
+            if not room_state.sensor_stale_warned:
+                _LOGGER.warning(
+                    "Room %s temperature sensor %s has not reported for over "
+                    "%s; neutralizing the room until it updates again",
+                    room.name,
+                    room.sensor_entity,
+                    SENSOR_STALE_TIMEOUT,
+                )
+                room_state.sensor_stale_warned = True
+            await self._neutralize_room(room)
+            return None
+
+        room_state.sensor_stale_warned = False
         return float(sensor_state.state)
 
     async def _neutralize_room(self, room: Room) -> None:
