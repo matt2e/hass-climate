@@ -347,6 +347,52 @@ class TestFanCycleRuntimeCap:
         assert parent._fan_cycle_active is False
         assert len(calls(hass, "climate", "turn_off")) == 1
 
+    @pytest.mark.asyncio
+    async def test_hvac_mode_change_clears_block(self):
+        # The cooldown is scoped to the room temps at the time it triggered;
+        # an hvac mode change invalidates that, so the block must not carry over.
+        hass = make_hass(
+            room_temps={
+                "sensor.living_room_temp": 22.0,
+                "sensor.bedroom_temp": 18.0,
+                "sensor.office_temp": 21.0,
+            },
+            cover_positions=COVERS_CLOSED,
+            light_states=LIGHTS_ON,
+            real_climate_action=HVACAction.IDLE,
+        )
+        parent = make_cool_parent(hass)
+        parent._fan_cycle_blocked_until = datetime.now() + FAN_CYCLE_COOLDOWN
+
+        await parent.async_set_hvac_mode(HVACMode.HEAT)
+
+        assert parent._fan_cycle_blocked_until is None
+
+    @pytest.mark.asyncio
+    async def test_real_cool_cycle_clears_block(self):
+        # A real compressor cycle moves the room temps the cooldown was
+        # guarding against, so the block must not survive it.
+        hass = make_hass(
+            room_temps={
+                "sensor.living_room_temp": 23.0,
+                "sensor.bedroom_temp": 18.0,
+                "sensor.office_temp": 21.0,
+            },
+            cover_positions=COVERS_CLOSED,
+            light_states=LIGHTS_ON,
+            real_climate_action=HVACAction.IDLE,
+        )
+        parent = make_cool_parent(hass)
+        parent._fan_cycle_blocked_until = datetime.now() + FAN_CYCLE_COOLDOWN
+
+        await parent._async_control_real_climate()
+
+        # a real cool cycle ran (needy primary past tolerance)...
+        set_mode_calls = calls(hass, "climate", "set_hvac_mode")
+        assert set_mode_calls[-1][0][2]["hvac_mode"] == HVACMode.COOL.value
+        # ...and the stale cooldown was dropped
+        assert parent._fan_cycle_blocked_until is None
+
 
 class TestFanCycleHvacAction:
     def test_reports_fan_while_cycling(self):

@@ -536,7 +536,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         """Set hvac mode."""
         if hvac_mode in {HVACMode.OFF, HVACMode.COOL, HVACMode.HEAT, HVACMode.FAN_ONLY}:
             self._hvac_mode = hvac_mode
-            self._end_fan_cycle()
+            self._end_fan_cycle(clear_block=True)
         else:
             _LOGGER.error("Unrecognized hvac mode: %s", hvac_mode)
             return
@@ -774,7 +774,9 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     # so mark all rooms as not satisfied
                     for room_state in self._room_states.values():
                         room_state.is_satisfied = False
-                self._end_fan_cycle()
+                # a real cool/heat cycle moves the room temps the cooldown was
+                # guarding against, so drop the block along with the session
+                self._end_fan_cycle(clear_block=True)
 
                 await self.hass.services.async_call(
                     "climate",
@@ -1214,10 +1216,19 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 blocking=False,
             )
 
-    def _end_fan_cycle(self) -> None:
-        """Clear fan cycling state; the caller drives the unit and covers."""
+    def _end_fan_cycle(self, clear_block: bool = False) -> None:
+        """Clear fan cycling state; the caller drives the unit and covers.
+
+        The runtime-cap cooldown (``_fan_cycle_blocked_until``) normally
+        survives ending a session so an idle unit can't immediately restart
+        cycling. Pass clear_block=True when the situation the cooldown guards
+        against no longer applies — an hvac mode change or a real cool/heat
+        cycle, both of which move the room temps the cooldown was scoped to.
+        """
         self._fan_cycle_active = False
         self._fan_cycle_started_at = None
+        if clear_block:
+            self._fan_cycle_blocked_until = None
 
     async def _async_update_child_thermostats(self):
         """Update child thermostat state."""
