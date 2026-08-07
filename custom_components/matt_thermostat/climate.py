@@ -1201,6 +1201,12 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         # already open from the normal room update pass
         for room in donor_rooms:
             self._room_states[room.name].cover_pos = 100
+            cover_state = self.hass.states.get(room.cover_entity)
+            cover_pos = (
+                cover_state.attributes.get("current_position", 0) if cover_state else 0
+            )
+            if cover_pos == 100:
+                continue
             await self.hass.services.async_call(
                 "cover",
                 "set_cover_position",

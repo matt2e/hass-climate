@@ -100,6 +100,33 @@ class TestFanCycleStarts:
         assert parent._room_states["Bedroom"].cover_pos == 100
 
     @pytest.mark.asyncio
+    async def test_skips_donor_cover_already_open(self):
+        # Donor vent already at 100 shouldn't get re-commanded every pass
+        hass = make_hass(
+            room_temps={
+                "sensor.living_room_temp": 22.0,
+                "sensor.bedroom_temp": 18.0,
+                "sensor.office_temp": 21.0,
+            },
+            cover_positions={**COVERS_CLOSED, "cover.bedroom_vent": 100},
+            light_states=LIGHTS_ON,
+            real_climate_action=HVACAction.IDLE,
+        )
+        parent = make_cool_parent(hass)
+
+        await parent._async_control_real_climate()
+
+        assert parent._fan_cycle_active is True
+        donor_calls = [
+            c
+            for c in calls(hass, "cover", "set_cover_position")
+            if c[0][2]["entity_id"] == "cover.bedroom_vent"
+        ]
+        assert not donor_calls
+        # state still reflects the desired open position
+        assert parent._room_states["Bedroom"].cover_pos == 100
+
+    @pytest.mark.asyncio
     async def test_starts_in_heat_mode_mirror(self):
         # Living room at target, bedroom 4° warmer
         hass = make_hass(
