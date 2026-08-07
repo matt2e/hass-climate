@@ -9,6 +9,7 @@ AC on; brief dropouts under the grace window keep the room's demand.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 from homeassistant.components.climate import HVACAction, HVACMode
@@ -197,6 +198,63 @@ class TestUnavailableSensorGrace:
         await parent._async_control_real_climate()
 
         assert len(_living_cover_zero_calls(hass)) == 1
+
+    @pytest.mark.asyncio
+    async def test_warns_once_per_outage(self):
+        """Neutralizing past the grace period is logged exactly once."""
+        hass, parent = _make_cooling_parent()
+        living = parent._rooms[0]
+        parent._room_states[living.name] = RoomState(
+            mode=RoomMode.PRIMARY,
+            is_satisfied=False,
+            cover_pos=100,
+            light_on=True,
+            sensor_unavailable_since=datetime.now() - timedelta(minutes=6),
+        )
+
+        with patch("custom_components.matt_thermostat.climate._LOGGER") as mock_logger:
+            await parent._async_control_real_climate()
+            await parent._async_control_real_climate()
+
+        unavailable_warnings = [
+            c for c in mock_logger.warning.call_args_list if "unavailable" in c[0][0]
+        ]
+        assert len(unavailable_warnings) == 1
+        assert parent._room_states[living.name].sensor_unavailable_warned is True
+
+    @pytest.mark.asyncio
+    async def test_recovery_clears_warned_flag(self):
+        """When the sensor returns, the once-per-outage warn flag resets."""
+        hass = make_hass(
+            room_temps={
+                "sensor.living_room_temp": 25.0,
+                "sensor.office_temp": 20.0,
+                "sensor.bedroom_temp": 20.0,
+            },
+            cover_positions={
+                "cover.living_room_vent": 0,
+                "cover.office_vent": 0,
+                "cover.bedroom_vent": 0,
+            },
+            light_states={"light.living_room": STATE_ON, "light.office": STATE_ON},
+            real_climate_action=HVACAction.IDLE,
+        )
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.COOL)
+        setup_feedback_switches(hass)
+        _set_primary_lights_on(parent)
+        living = parent._rooms[0]
+        parent._room_states[living.name] = RoomState(
+            mode=RoomMode.PRIMARY,
+            is_satisfied=True,
+            cover_pos=0,
+            light_on=True,
+            sensor_unavailable_since=datetime.now() - timedelta(minutes=6),
+            sensor_unavailable_warned=True,
+        )
+
+        await parent._async_control_real_climate()
+
+        assert parent._room_states[living.name].sensor_unavailable_warned is False
 
     @pytest.mark.asyncio
     async def test_secondary_room_vent_closed_past_grace(self):

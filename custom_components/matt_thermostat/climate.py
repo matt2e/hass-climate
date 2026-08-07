@@ -282,6 +282,9 @@ class RoomState:
     disabled_by_door: bool = False
     # tracks when the room's sensor first went unavailable; None while readable
     sensor_unavailable_since: datetime | None = None
+    # true once an unavailable sensor past the grace period has been logged;
+    # cleared when it reports again, so each outage warns exactly once
+    sensor_unavailable_warned: bool = False
     # true once a stale sensor has been logged; cleared when it reports again,
     # so each outage warns exactly once
     sensor_stale_warned: bool = False
@@ -971,11 +974,21 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 datetime.now() - room_state.sensor_unavailable_since
                 >= SENSOR_UNAVAILABLE_GRACE
             ):
+                if not room_state.sensor_unavailable_warned:
+                    _LOGGER.warning(
+                        "Room %s temperature sensor %s has been unavailable for "
+                        "over %s; neutralizing the room until it reports again",
+                        room.name,
+                        room.sensor_entity,
+                        SENSOR_UNAVAILABLE_GRACE,
+                    )
+                    room_state.sensor_unavailable_warned = True
                 await self._neutralize_room(room)
             return None
 
         # A readable state means the sensor is no longer unavailable.
         room_state.sensor_unavailable_since = None
+        room_state.sensor_unavailable_warned = False
 
         # last_reported is bumped on every write, even when the value is
         # unchanged, so its age is exactly how long the sensor has been silent.
