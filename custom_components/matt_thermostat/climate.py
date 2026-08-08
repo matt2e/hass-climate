@@ -1217,11 +1217,25 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         return "auto"
 
     def _room_temp(self, room: Room) -> float | None:
-        """Read a room's current temperature, or None if unavailable."""
+        """Read a room's current temperature, or None if it can't be trusted.
+
+        Returns None when the sensor is unavailable/unknown or has gone stale
+        (last_reported older than SENSOR_STALE_TIMEOUT), mirroring
+        _read_demand_room_temp. A frozen reading from a dead sensor must not be
+        trusted for fan-cycling decisions any more than for demand: otherwise a
+        room the demand loop just neutralized would still look "needy" here and
+        keep the unit fan-cycling instead of letting it turn off.
+        """
         sensor_state = self.hass.states.get(room.sensor_entity)
         if sensor_state is None or sensor_state.state in (
             STATE_UNAVAILABLE,
             STATE_UNKNOWN,
+        ):
+            return None
+        last_reported = sensor_state.last_reported
+        if (
+            last_reported is not None
+            and dt_util.utcnow() - last_reported >= SENSOR_STALE_TIMEOUT
         ):
             return None
         return float(sensor_state.state)
