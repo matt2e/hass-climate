@@ -37,6 +37,71 @@
             }
         }
     },
+    "config_subentries": {
+        "room": {
+            "entry_type": "Room",
+            "initiate_flow": {
+                "reconfigure": "Reconfigure room",
+                "user": "Add room"
+            },
+            "step": {
+                "reconfigure": {
+                    "data": {
+                        "allows_override": "Allow override thermostat",
+                        "bedtime_mode": "Bedtime mode",
+                        "cover": "Vent cover",
+                        "door": "Door sensor",
+                        "is_overflow": "Overflow room",
+                        "light": "Light",
+                        "mode": "Mode",
+                        "name": "Room name",
+                        "sensor": "Temperature sensor",
+                        "vents": "Vents"
+                    },
+                    "data_description": {
+                        "allows_override": "Create a dedicated child thermostat for this room so its target temperature can be overridden independently.",
+                        "bedtime_mode": "The mode this room uses while bedtime is active, overriding the standard mode.",
+                        "cover": "Vent cover that opens and closes to control airflow into this room.",
+                        "door": "Optional door/contact sensor (where \"off\" means closed). When set and the door reads closed, this room is disabled while it would otherwise be secondary. Leave empty to never gate on a door.",
+                        "is_overflow": "Treat this room as an overflow room that opens its vents to relieve excess airflow.",
+                        "light": "Optional light used to detect whether the room is occupied. Leave empty if the room has no light to track.",
+                        "mode": "How this room participates: primary rooms drive the target temperature, secondary rooms follow along, and disabled rooms are excluded.",
+                        "name": "A name for this room. Used to label the room's child thermostat and entities.",
+                        "sensor": "Temperature sensor that reflects this room's current temperature.",
+                        "vents": "Number of vents in this room. Used to weight how much airflow the room contributes."
+                    },
+                    "title": "Reconfigure room"
+                },
+                "user": {
+                    "data": {
+                        "allows_override": "Allow override thermostat",
+                        "bedtime_mode": "Bedtime mode",
+                        "cover": "Vent cover",
+                        "door": "Door sensor",
+                        "is_overflow": "Overflow room",
+                        "light": "Light",
+                        "mode": "Mode",
+                        "name": "Room name",
+                        "sensor": "Temperature sensor",
+                        "vents": "Vents"
+                    },
+                    "data_description": {
+                        "allows_override": "Create a dedicated child thermostat for this room so its target temperature can be overridden independently.",
+                        "bedtime_mode": "The mode this room uses while bedtime is active, overriding the standard mode.",
+                        "cover": "Vent cover that opens and closes to control airflow into this room.",
+                        "door": "Optional door/contact sensor (where \"off\" means closed). When set and the door reads closed, this room is disabled while it would otherwise be secondary. Leave empty to never gate on a door.",
+                        "is_overflow": "Treat this room as an overflow room that opens its vents to relieve excess airflow.",
+                        "light": "Optional light used to detect whether the room is occupied. Leave empty if the room has no light to track.",
+                        "mode": "How this room participates: primary rooms drive the target temperature, secondary rooms follow along, and disabled rooms are excluded.",
+                        "name": "A name for this room. Used to label the room's child thermostat and entities.",
+                        "sensor": "Temperature sensor that reflects this room's current temperature.",
+                        "vents": "Number of vents in this room. Used to weight how much airflow the room contributes."
+                    },
+                    "title": "Add room"
+                }
+            }
+        }
+    },
     "options": {
         "step": {
             "init": {

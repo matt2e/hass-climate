@@ -73,6 +73,7 @@ from .const import (
     DEFAULT_TOLERANCE,
     DOMAIN,
     PLATFORMS,
+    SUBENTRY_TYPE_ROOM,
 )
 from .switch import FeedbackSwitch
 
@@ -107,31 +108,43 @@ SENSOR_UNAVAILABLE_GRACE = timedelta(minutes=5)
 SENSOR_STALE_TIMEOUT = timedelta(minutes=20)
 
 
+# Global config shared by the YAML platform and the UI config entry. The rooms
+# field is deliberately excluded here because the two paths source rooms
+# differently: YAML uses a single CONF_ROOMS JSON string, while the UI stores
+# one "room" subentry per room (see async_setup_entry / async_setup_platform).
+_COMMON_SCHEMA = {
+    vol.Required(CONF_REAL_CLIMATE): cv.entity_id,
+    vol.Required(CONF_PRESENCE): cv.entity_id,
+    vol.Required(CONF_MANUAL): cv.entity_id,
+    vol.Required(CONF_BEDTIME): cv.entity_id,
+    vol.Optional(CONF_MAX_TEMP): vol.Coerce(float),
+    vol.Optional(CONF_MIN_DUR): cv.positive_time_period,
+    vol.Optional(CONF_MIN_TEMP): vol.Coerce(float),
+    vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
+    vol.Optional(CONF_COLD_TOLERANCE, default=DEFAULT_TOLERANCE): vol.Coerce(float),
+    vol.Optional(CONF_HOT_TOLERANCE, default=DEFAULT_TOLERANCE): vol.Coerce(float),
+    vol.Optional(CONF_TARGET_TEMP): vol.Coerce(float),
+    vol.Optional(CONF_OUTPUT_TEXT): cv.string,
+    vol.Optional(CONF_COOLING_TEMP_MODIFIER, default=DEFAULT_TEMP_MODIFIER): vol.Coerce(
+        float
+    ),
+    vol.Optional(CONF_HEATING_TEMP_MODIFIER, default=DEFAULT_TEMP_MODIFIER): vol.Coerce(
+        float
+    ),
+    vol.Optional(CONF_INITIAL_HVAC_MODE): vol.In(
+        [HVACMode.FAN_ONLY, HVACMode.COOL, HVACMode.HEAT, HVACMode.OFF]
+    ),
+    vol.Optional(CONF_UNIQUE_ID): cv.string,
+}
+
+# UI/config-entry options: rooms live in subentries, so CONF_ROOMS is absent.
+CONFIG_ENTRY_SCHEMA_COMMON = vol.Schema(_COMMON_SCHEMA)
+
+# Legacy YAML platform: rooms are still a single CONF_ROOMS JSON string.
 PLATFORM_SCHEMA_COMMON = vol.Schema(
     {
-        vol.Required(CONF_REAL_CLIMATE): cv.entity_id,
-        vol.Required(CONF_PRESENCE): cv.entity_id,
-        vol.Required(CONF_MANUAL): cv.entity_id,
-        vol.Required(CONF_BEDTIME): cv.entity_id,
+        **_COMMON_SCHEMA,
         vol.Required(CONF_ROOMS): cv.string,
-        vol.Optional(CONF_MAX_TEMP): vol.Coerce(float),
-        vol.Optional(CONF_MIN_DUR): cv.positive_time_period,
-        vol.Optional(CONF_MIN_TEMP): vol.Coerce(float),
-        vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
-        vol.Optional(CONF_COLD_TOLERANCE, default=DEFAULT_TOLERANCE): vol.Coerce(float),
-        vol.Optional(CONF_HOT_TOLERANCE, default=DEFAULT_TOLERANCE): vol.Coerce(float),
-        vol.Optional(CONF_TARGET_TEMP): vol.Coerce(float),
-        vol.Optional(CONF_OUTPUT_TEXT): cv.string,
-        vol.Optional(
-            CONF_COOLING_TEMP_MODIFIER, default=DEFAULT_TEMP_MODIFIER
-        ): vol.Coerce(float),
-        vol.Optional(
-            CONF_HEATING_TEMP_MODIFIER, default=DEFAULT_TEMP_MODIFIER
-        ): vol.Coerce(float),
-        vol.Optional(CONF_INITIAL_HVAC_MODE): vol.In(
-            [HVACMode.FAN_ONLY, HVACMode.COOL, HVACMode.HEAT, HVACMode.OFF]
-        ),
-        vol.Optional(CONF_UNIQUE_ID): cv.string,
     }
 )
 
@@ -144,12 +157,29 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Initialize config entry."""
+    """Initialize config entry.
+
+    The UI path builds one Room per "room" config subentry, each with its own
+    entity pickers and validation. The legacy YAML path (async_setup_platform)
+    instead parses the CONF_ROOMS JSON string; that divergence is intentional
+    so existing YAML setups keep working.
+    """
+    rooms: list[Room] = []
+    room_subentry_ids: dict[str, str] = {}
+    for subentry in config_entry.subentries.values():
+        if subentry.subentry_type != SUBENTRY_TYPE_ROOM:
+            continue
+        room = Room.from_subentry(subentry.data)
+        rooms.append(room)
+        room_subentry_ids[room.name] = subentry.subentry_id
+
     await _async_setup_config(
         hass,
-        PLATFORM_SCHEMA_COMMON(dict(config_entry.options)),
+        CONFIG_ENTRY_SCHEMA_COMMON(dict(config_entry.options)),
         config_entry.entry_id,
+        rooms,
         async_add_entities,
+        room_subentry_ids=room_subentry_ids,
     )
 
 
@@ -159,11 +189,19 @@ async def async_setup_platform(
     async_add_entities: AddEntitiesCallback,
     discovery_info: DiscoveryInfoType | None = None,
 ) -> None:
-    """Set up the parent thermostat platform."""
+    """Set up the parent thermostat platform (legacy YAML)."""
 
     await async_setup_reload_service(hass, DOMAIN, PLATFORMS)
+
+    # Legacy YAML keeps rooms as a single CONF_ROOMS JSON string; the UI path
+    # now uses per-room subentries instead (see async_setup_entry).
+    data = json.loads(config[CONF_ROOMS])
+    if not isinstance(data, list):
+        raise TypeError("Expected a list of rooms")
+    rooms = [Room.from_dict(item) for item in data]
+
     await _async_setup_config(
-        hass, config, config.get(CONF_UNIQUE_ID), async_add_entities
+        hass, config, config.get(CONF_UNIQUE_ID), rooms, async_add_entities
     )
 
 
@@ -171,9 +209,11 @@ async def _async_setup_config(
     hass: HomeAssistant,
     config: Mapping[str, Any],
     unique_id: str | None,
+    rooms: list[Room],
     async_add_entities: AddEntitiesCallback | AddConfigEntryEntitiesCallback,
+    room_subentry_ids: Mapping[str, str] | None = None,
 ) -> None:
-    """Set up the parent thermostat platform."""
+    """Set up the parent thermostat platform from an already-built rooms list."""
 
     name: str = config[CONF_NAME]
     real_climate_entity_id: str = config[CONF_REAL_CLIMATE]
@@ -195,11 +235,6 @@ async def _async_setup_config(
     precision: float = PRECISION_TENTHS
     target_temperature_step = 0.1
 
-    data = json.loads(config[CONF_ROOMS])
-    if not isinstance(data, list):
-        raise TypeError("Expected a list of rooms")
-    rooms = [Room.from_dict(item) for item in data]
-
     # Create a map of room name to ChildThermostat for rooms that allow override
     child_thermostats: dict[str, ChildThermostat] = {
         room.name: ChildThermostat(
@@ -217,8 +252,17 @@ async def _async_setup_config(
         if room.allows_override
     }
 
-    # add child thermostats, which gives them each an entity id
-    async_add_entities(list(child_thermostats.values()))
+    # Add child thermostats, which gives them each an entity id. On the UI path
+    # each override room is a config subentry, so bind its child thermostat to
+    # that subentry; the YAML path has no subentries and adds them plainly. The
+    # unique_id is unchanged either way so existing entity ids / history survive.
+    subentry_ids = room_subentry_ids or {}
+    for room_name, child in child_thermostats.items():
+        subentry_id = subentry_ids.get(room_name)
+        if subentry_id is not None:
+            async_add_entities([child], config_subentry_id=subentry_id)
+        else:
+            async_add_entities([child])
 
     parent = ParentThermostat(
         hass,
@@ -367,6 +411,16 @@ class Room:
             vents=int(data.get("vents", 1)),
             door_entity=data.get("door"),
         )
+
+    @staticmethod
+    def from_subentry(data: Mapping[str, Any]) -> Room:
+        """Build a Room from a config subentry's data mapping.
+
+        The per-room ``CONF_*`` subentry keys deliberately match the legacy
+        room-dict keys, so this reuses ``from_dict`` (and its RoomMode
+        validation) rather than duplicating the field wiring.
+        """
+        return Room.from_dict(dict(data))
 
 
 class ParentThermostat(ClimateEntity, RestoreEntity):
@@ -1163,11 +1217,25 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         return "auto"
 
     def _room_temp(self, room: Room) -> float | None:
-        """Read a room's current temperature, or None if unavailable."""
+        """Read a room's current temperature, or None if it can't be trusted.
+
+        Returns None when the sensor is unavailable/unknown or has gone stale
+        (last_reported older than SENSOR_STALE_TIMEOUT), mirroring
+        _read_demand_room_temp. A frozen reading from a dead sensor must not be
+        trusted for fan-cycling decisions any more than for demand: otherwise a
+        room the demand loop just neutralized would still look "needy" here and
+        keep the unit fan-cycling instead of letting it turn off.
+        """
         sensor_state = self.hass.states.get(room.sensor_entity)
         if sensor_state is None or sensor_state.state in (
             STATE_UNAVAILABLE,
             STATE_UNKNOWN,
+        ):
+            return None
+        last_reported = sensor_state.last_reported
+        if (
+            last_reported is not None
+            and dt_util.utcnow() - last_reported >= SENSOR_STALE_TIMEOUT
         ):
             return None
         return float(sensor_state.state)
