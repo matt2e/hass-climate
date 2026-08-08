@@ -27,7 +27,7 @@ ROOMS_JSON = json.dumps(
     [
         {
             "name": "Living Room",
-            "sensor": "sensor.living_room_temp",
+            "sensor": ["sensor.living_room_temp"],
             "cover": "cover.living_room_vent",
             "light": "light.living_room",
             "mode": "primary",
@@ -38,7 +38,7 @@ ROOMS_JSON = json.dumps(
         },
         {
             "name": "Bedroom",
-            "sensor": "sensor.bedroom_temp",
+            "sensor": ["sensor.bedroom_temp"],
             "cover": "cover.bedroom_vent",
             "light": None,
             "mode": "secondary",
@@ -49,7 +49,7 @@ ROOMS_JSON = json.dumps(
         },
         {
             "name": "Office",
-            "sensor": "sensor.office_temp",
+            "sensor": ["sensor.office_temp"],
             "cover": "cover.office_vent",
             "light": "light.office",
             "mode": "primary",

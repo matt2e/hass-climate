@@ -28,7 +28,7 @@ class TestRoomFromDict:
         }
         room = Room.from_dict(data)
         assert room.name == "Living Room"
-        assert room.sensor_entity == "sensor.living_room_temp"
+        assert room.sensor_entities == ["sensor.living_room_temp"]
         assert room.cover_entity == "cover.living_room_vent"
         assert room.light_entity == "light.living_room"
         assert room.standard_mode == RoomMode.PRIMARY
@@ -76,6 +76,32 @@ class TestRoomFromDict:
         }
         room = Room.from_dict(data)
         assert room.door_entity is None
+
+    def test_sensor_list(self):
+        data = {
+            "name": "Living Room",
+            "sensor": ["sensor.living_room_temp", "sensor.living_room_temp_2"],
+            "cover": "cover.living_room_vent",
+            "mode": "primary",
+            "bedtime_mode": "secondary",
+        }
+        room = Room.from_dict(data)
+        assert room.sensor_entities == [
+            "sensor.living_room_temp",
+            "sensor.living_room_temp_2",
+        ]
+
+    def test_empty_sensor_list_raises(self):
+        with pytest.raises(ValueError, match="at least one sensor"):
+            Room.from_dict(
+                {
+                    "name": "Room",
+                    "sensor": [],
+                    "cover": "c",
+                    "mode": "primary",
+                    "bedtime_mode": "primary",
+                }
+            )
 
     def test_missing_name_raises(self):
         with pytest.raises(ValueError):
