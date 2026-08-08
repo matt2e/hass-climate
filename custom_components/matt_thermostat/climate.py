@@ -50,6 +50,7 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.reload import async_setup_reload_service
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
+from homeassistant.util import dt as dt_util
 
 from .child_thermostat import ChildThermostat
 from .const import (
@@ -91,6 +92,19 @@ FAN_CYCLE_SPREAD_OFF = 2.0  # stop once the spread collapses below this
 FAN_CYCLE_RECOVERY_MARGIN = 0.3  # stop once the needy room is this far past target
 FAN_CYCLE_MAX_RUNTIME = timedelta(minutes=45)  # hard cap per session
 FAN_CYCLE_COOLDOWN = timedelta(minutes=30)  # no restart after capping out
+
+# How long a room's temperature sensor may stay unavailable/unknown before we
+# stop trusting the room and neutralize it (see _read_demand_room_temp). Brief
+# dropouts under this window are tolerated so the room keeps its demand.
+SENSOR_UNAVAILABLE_GRACE = timedelta(minutes=5)
+
+# A sensor can keep publishing its last value long after it has actually
+# stopped updating (dead battery, lost connectivity) without ever going
+# unavailable. Once its state has not been written (last_reported) for longer
+# than this, treat the reading as stale and neutralize the room until a fresh
+# value arrives. The threshold sits above the slowest common battery-sensor
+# heartbeat so healthy sensors in stable rooms are not false-triggered.
+SENSOR_STALE_TIMEOUT = timedelta(minutes=20)
 
 
 PLATFORM_SCHEMA_COMMON = vol.Schema(
@@ -266,6 +280,14 @@ class RoomState:
     raw_door_closed_at: datetime | None = None
     # set only when the secondary gate converts SECONDARY -> DISABLED
     disabled_by_door: bool = False
+    # tracks when the room's sensor first went unavailable; None while readable
+    sensor_unavailable_since: datetime | None = None
+    # true once an unavailable sensor past the grace period has been logged;
+    # cleared when it reports again, so each outage warns exactly once
+    sensor_unavailable_warned: bool = False
+    # true once a stale sensor has been logged; cleared when it reports again,
+    # so each outage warns exactly once
+    sensor_stale_warned: bool = False
 
 
 @dataclass
@@ -676,26 +698,18 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                         most_extreme_temperature, target_temp
                     )
 
-                sensor_state = self.hass.states.get(room.sensor_entity)
-                if sensor_state is None or sensor_state.state in (
-                    STATE_UNAVAILABLE,
-                    STATE_UNKNOWN,
-                ):
+                current_temp = await self._read_demand_room_temp(room)
+                if current_temp is None:
                     continue
-                current_temp = float(sensor_state.state)
 
                 await self.async_update_room(
                     room=room, current_temp=current_temp, target_temp=target_temp
                 )
 
             for room in primary_rooms:
-                sensor_state = self.hass.states.get(room.sensor_entity)
-                if sensor_state is None or sensor_state.state in (
-                    STATE_UNAVAILABLE,
-                    STATE_UNKNOWN,
-                ):
+                current_temp = await self._read_demand_room_temp(room)
+                if current_temp is None:
                     continue
-                current_temp = float(sensor_state.state)
                 if primary_current_temp is None:
                     primary_current_temp = current_temp
                 elif self._hvac_mode in {HVACMode.COOL, HVACMode.FAN_ONLY}:
@@ -937,17 +951,90 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             return min(self._target_temp + 2, 28)
         return self._target_temp
 
+    async def _read_demand_room_temp(self, room: Room) -> float | None:
+        """Read a room's sensor for the airflow-gating loops.
+
+        Returns the current temperature, or None if the sensor is
+        unavailable/unknown or has gone stale. Tracks how long the sensor has
+        been out and, once the grace period lapses, neutralizes the room so a
+        dead sensor can no longer hold the AC on (primary/custom) or a vent
+        open (secondary). A sensor that keeps its last numeric value but stops
+        reporting (last_reported older than SENSOR_STALE_TIMEOUT) is treated
+        the same way.
+        """
+        room_state = self._room_states[room.name]
+        sensor_state = self.hass.states.get(room.sensor_entity)
+        if sensor_state is None or sensor_state.state in (
+            STATE_UNAVAILABLE,
+            STATE_UNKNOWN,
+        ):
+            if room_state.sensor_unavailable_since is None:
+                room_state.sensor_unavailable_since = datetime.now()
+            elif (
+                datetime.now() - room_state.sensor_unavailable_since
+                >= SENSOR_UNAVAILABLE_GRACE
+            ):
+                if not room_state.sensor_unavailable_warned:
+                    _LOGGER.warning(
+                        "Room %s temperature sensor %s has been unavailable for "
+                        "over %s; neutralizing the room until it reports again",
+                        room.name,
+                        room.sensor_entity,
+                        SENSOR_UNAVAILABLE_GRACE,
+                    )
+                    room_state.sensor_unavailable_warned = True
+                await self._neutralize_room(room)
+            return None
+
+        # A readable state means the sensor is no longer unavailable.
+        room_state.sensor_unavailable_since = None
+        room_state.sensor_unavailable_warned = False
+
+        # last_reported is bumped on every write, even when the value is
+        # unchanged, so its age is exactly how long the sensor has been silent.
+        # It is tz-aware UTC, so compare against dt_util.utcnow() (naive
+        # datetime.now() would raise). If it stays silent past the timeout,
+        # stop trusting the frozen value and neutralize the room.
+        last_reported = sensor_state.last_reported
+        if (
+            last_reported is not None
+            and dt_util.utcnow() - last_reported >= SENSOR_STALE_TIMEOUT
+        ):
+            if not room_state.sensor_stale_warned:
+                _LOGGER.warning(
+                    "Room %s temperature sensor %s has not reported for over "
+                    "%s; neutralizing the room until it updates again",
+                    room.name,
+                    room.sensor_entity,
+                    SENSOR_STALE_TIMEOUT,
+                )
+                room_state.sensor_stale_warned = True
+            await self._neutralize_room(room)
+            return None
+
+        room_state.sensor_stale_warned = False
+        return float(sensor_state.state)
+
+    async def _neutralize_room(self, room: Room) -> None:
+        """Stop a room with a dead sensor from generating AC demand."""
+        room_state = self._room_states[room.name]
+        room_state.is_satisfied = True
+        if room_state.cover_pos != 0:
+            room_state.cover_pos = 0
+            await self.hass.services.async_call(
+                "cover",
+                "set_cover_position",
+                {"entity_id": room.cover_entity, "position": 0},
+                blocking=False,
+            )
+
     async def async_update_secondary_rooms(self, secondary_rooms: list[Room]) -> None:
         """Update secondary rooms when other rooms need the AC on."""
         target_temp_secondary = self._target_secondary_temp()
         for room in secondary_rooms:
-            sensor_state = self.hass.states.get(room.sensor_entity)
-            if sensor_state is None or sensor_state.state in (
-                STATE_UNAVAILABLE,
-                STATE_UNKNOWN,
-            ):
+            current_temp = await self._read_demand_room_temp(room)
+            if current_temp is None:
                 continue
-            current_temp = float(sensor_state.state)
 
             # Pull secondary rooms toward the primary target while the AC is
             # already running for primaries, but judge "satisfied" at the

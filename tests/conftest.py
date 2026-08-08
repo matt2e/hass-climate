@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -11,9 +12,11 @@ from homeassistant.const import (
     PRECISION_TENTHS,
     STATE_OFF,
     STATE_ON,
+    STATE_UNAVAILABLE,
     UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant, State
+from homeassistant.util import dt as dt_util
 
 from custom_components.matt_thermostat.child_thermostat import ChildThermostat
 from custom_components.matt_thermostat.climate import (
@@ -62,11 +65,21 @@ ROOMS_JSON = json.dumps(
 )
 
 
-def make_state(state: str, attributes: dict[str, Any] | None = None) -> State:
-    """Create a mock HA State object."""
+def make_state(
+    state: str,
+    attributes: dict[str, Any] | None = None,
+    last_reported: datetime | None = None,
+) -> State:
+    """Create a mock HA State object.
+
+    ``last_reported`` mirrors HA's tz-aware UTC timestamp of the last state
+    write; it defaults to "just now" so states read fresh unless a test
+    deliberately ages them.
+    """
     s = MagicMock(spec=State)
     s.state = state
     s.attributes = attributes or {}
+    s.last_reported = last_reported if last_reported is not None else dt_util.utcnow()
     return s
 
 
@@ -79,10 +92,17 @@ def make_hass(
     cover_positions: dict[str, int] | None = None,
     light_states: dict[str, str] | None = None,
     door_states: dict[str, str] | None = None,
+    unavailable_sensors: list[str] | None = None,
+    stale_sensors: dict[str, timedelta] | None = None,
     real_climate_action: str = HVACAction.IDLE,
     real_climate_state: str = HVACMode.OFF,
 ) -> MagicMock:
-    """Build a mock HomeAssistant with controllable entity states."""
+    """Build a mock HomeAssistant with controllable entity states.
+
+    ``stale_sensors`` maps a temperature sensor entity_id to how long ago it
+    last reported, ageing its ``last_reported`` timestamp so the staleness
+    check treats an otherwise-readable value as stale.
+    """
     hass = MagicMock(spec=HomeAssistant)
     hass.services = MagicMock()
     hass.services.async_call = AsyncMock()
@@ -92,6 +112,7 @@ def make_hass(
     covers = cover_positions or {}
     lights = light_states or {}
     doors = door_states or {}
+    stale = stale_sensors or {}
 
     state_map: dict[str, State] = {
         "input_boolean.presence": make_state(presence),
@@ -104,7 +125,10 @@ def make_hass(
     }
 
     for entity_id, temp in temps.items():
-        state_map[entity_id] = make_state(str(temp))
+        last_reported = None
+        if entity_id in stale:
+            last_reported = dt_util.utcnow() - stale[entity_id]
+        state_map[entity_id] = make_state(str(temp), last_reported=last_reported)
 
     for entity_id, pos in covers.items():
         state_map[entity_id] = make_state("open", {"current_position": pos})
@@ -114,6 +138,9 @@ def make_hass(
 
     for entity_id, door_st in doors.items():
         state_map[entity_id] = make_state(door_st)
+
+    for entity_id in unavailable_sensors or []:
+        state_map[entity_id] = make_state(STATE_UNAVAILABLE)
 
     hass.states = MagicMock()
     hass.states.get = lambda eid: state_map.get(eid)
