@@ -23,3 +23,17 @@ CONF_COOLING_TEMP_MODIFIER = "cooling_temp_modifier"
 CONF_HEATING_TEMP_MODIFIER = "heating_temp_modifier"
 CONF_INITIAL_HVAC_MODE = "initial_hvac_mode"
 CONF_TARGET_TEMP = "target_temp"
+
+# Per-room subentry fields (one room per subentry)
+CONF_ROOM_NAME = "name"
+CONF_SENSOR = "sensor"
+CONF_COVER = "cover"
+CONF_LIGHT = "light"
+CONF_DOOR = "door"
+CONF_MODE = "mode"
+CONF_BEDTIME_MODE = "bedtime_mode"
+CONF_ALLOWS_OVERRIDE = "allows_override"
+CONF_IS_OVERFLOW = "is_overflow"
+CONF_VENTS = "vents"
+
+SUBENTRY_TYPE_ROOM = "room"

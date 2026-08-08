@@ -38,6 +38,71 @@
       }
     }
   },
+  "config_subentries": {
+    "room": {
+      "entry_type": "Room",
+      "initiate_flow": {
+        "user": "Add room",
+        "reconfigure": "Reconfigure room"
+      },
+      "step": {
+        "user": {
+          "title": "Add room",
+          "data": {
+            "name": "Room name",
+            "sensor": "Temperature sensor",
+            "cover": "Vent cover",
+            "light": "Light",
+            "door": "Door sensor",
+            "mode": "Mode",
+            "bedtime_mode": "Bedtime mode",
+            "allows_override": "Allow override thermostat",
+            "is_overflow": "Overflow room",
+            "vents": "Vents"
+          },
+          "data_description": {
+            "name": "A name for this room. Used to label the room's child thermostat and entities.",
+            "sensor": "Temperature sensor that reflects this room's current temperature.",
+            "cover": "Vent cover that opens and closes to control airflow into this room.",
+            "light": "Optional light used to detect whether the room is occupied. Leave empty if the room has no light to track.",
+            "door": "Optional door/contact sensor (where \"off\" means closed). When set and the door reads closed, this room is disabled while it would otherwise be secondary. Leave empty to never gate on a door.",
+            "mode": "How this room participates: primary rooms drive the target temperature, secondary rooms follow along, and disabled rooms are excluded.",
+            "bedtime_mode": "The mode this room uses while bedtime is active, overriding the standard mode.",
+            "allows_override": "Create a dedicated child thermostat for this room so its target temperature can be overridden independently.",
+            "is_overflow": "Treat this room as an overflow room that opens its vents to relieve excess airflow.",
+            "vents": "Number of vents in this room. Used to weight how much airflow the room contributes."
+          }
+        },
+        "reconfigure": {
+          "title": "Reconfigure room",
+          "data": {
+            "name": "[%key:component::matt_thermostat::config_subentries::room::step::user::data::name%]",
+            "sensor": "[%key:component::matt_thermostat::config_subentries::room::step::user::data::sensor%]",
+            "cover": "[%key:component::matt_thermostat::config_subentries::room::step::user::data::cover%]",
+            "light": "[%key:component::matt_thermostat::config_subentries::room::step::user::data::light%]",
+            "door": "[%key:component::matt_thermostat::config_subentries::room::step::user::data::door%]",
+            "mode": "[%key:component::matt_thermostat::config_subentries::room::step::user::data::mode%]",
+            "bedtime_mode": "[%key:component::matt_thermostat::config_subentries::room::step::user::data::bedtime_mode%]",
+            "allows_override": "[%key:component::matt_thermostat::config_subentries::room::step::user::data::allows_override%]",
+            "is_overflow": "[%key:component::matt_thermostat::config_subentries::room::step::user::data::is_overflow%]",
+            "vents": "[%key:component::matt_thermostat::config_subentries::room::step::user::data::vents%]"
+          },
+          "data_description": {
+            "name": "[%key:component::matt_thermostat::config_subentries::room::step::user::data_description::name%]",
+            "sensor": "[%key:component::matt_thermostat::config_subentries::room::step::user::data_description::sensor%]",
+            "cover": "[%key:component::matt_thermostat::config_subentries::room::step::user::data_description::cover%]",
+            "light": "[%key:component::matt_thermostat::config_subentries::room::step::user::data_description::light%]",
+            "door": "[%key:component::matt_thermostat::config_subentries::room::step::user::data_description::door%]",
+            "mode": "[%key:component::matt_thermostat::config_subentries::room::step::user::data_description::mode%]",
+            "bedtime_mode": "[%key:component::matt_thermostat::config_subentries::room::step::user::data_description::bedtime_mode%]",
+            "allows_override": "[%key:component::matt_thermostat::config_subentries::room::step::user::data_description::allows_override%]",
+            "is_overflow": "[%key:component::matt_thermostat::config_subentries::room::step::user::data_description::is_overflow%]",
+            "vents": "[%key:component::matt_thermostat::config_subentries::room::step::user::data_description::vents%]"
+          }
+        }
+      }
+    }
+  },
   "options": {
     "step": {
       "init": {
