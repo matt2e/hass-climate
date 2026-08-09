@@ -473,6 +473,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             HVACMode.HEAT,
         ]
         self._active = False
+        self._last_device_active = False
         self._fan_cycle_active = False
         self._fan_cycle_started_at: datetime | None = None
         self._fan_cycle_blocked_until: datetime | None = None
@@ -1626,8 +1627,19 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         """If the toggleable device is currently active."""
 
         climate_state = self.hass.states.get(self._real_climate_entity_id)
-        if climate_state is None:
-            return False
+        if climate_state is None or climate_state.state in (
+            STATE_UNAVAILABLE,
+            STATE_UNKNOWN,
+        ):
+            # Momentary disconnect: the physical unit keeps idling/heating/
+            # cooling as it was. During a dropout the state object carries no
+            # attributes, so recomputing here would misread the AC. Hold the
+            # last reading we trusted (indefinitely) instead of guessing.
+            return self._last_device_active
 
         real_hvac_action = climate_state.attributes.get("hvac_action")
-        return real_hvac_action not in (HVACAction.IDLE, HVACAction.OFF)
+        self._last_device_active = real_hvac_action not in (
+            HVACAction.IDLE,
+            HVACAction.OFF,
+        )
+        return self._last_device_active
