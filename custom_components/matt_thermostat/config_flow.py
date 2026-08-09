@@ -43,7 +43,6 @@ from .const import (
     CONF_LIGHT,
     CONF_MANUAL,
     CONF_MAX_TEMP,
-    CONF_MIN_DUR,
     CONF_MIN_TEMP,
     CONF_MODE,
     CONF_OUTPUT_TEXT,
@@ -75,9 +74,6 @@ OPTIONS_SCHEMA = {
         selector.NumberSelectorConfig(
             mode=selector.NumberSelectorMode.BOX, unit_of_measurement=DEGREE, step=0.1
         )
-    ),
-    vol.Optional(CONF_MIN_DUR): selector.DurationSelector(
-        selector.DurationSelectorConfig(allow_negative=False)
     ),
     vol.Optional(CONF_MIN_TEMP): selector.NumberSelector(
         selector.NumberSelectorConfig(

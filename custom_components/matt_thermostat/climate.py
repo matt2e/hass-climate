@@ -62,7 +62,6 @@ from .const import (
     CONF_INITIAL_HVAC_MODE,
     CONF_MANUAL,
     CONF_MAX_TEMP,
-    CONF_MIN_DUR,
     CONF_MIN_TEMP,
     CONF_OUTPUT_TEXT,
     CONF_PRESENCE,
@@ -118,7 +117,6 @@ _COMMON_SCHEMA = {
     vol.Required(CONF_MANUAL): cv.entity_id,
     vol.Required(CONF_BEDTIME): cv.entity_id,
     vol.Optional(CONF_MAX_TEMP): vol.Coerce(float),
-    vol.Optional(CONF_MIN_DUR): cv.positive_time_period,
     vol.Optional(CONF_MIN_TEMP): vol.Coerce(float),
     vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
     vol.Optional(CONF_COLD_TOLERANCE, default=DEFAULT_TOLERANCE): vol.Coerce(float),
@@ -224,7 +222,6 @@ async def _async_setup_config(
     min_temp: float | None = config.get(CONF_MIN_TEMP)
     max_temp: float | None = config.get(CONF_MAX_TEMP)
     target_temp: float | None = config.get(CONF_TARGET_TEMP)
-    min_cycle_duration: timedelta | None = config.get(CONF_MIN_DUR)
     cold_tolerance: float = config[CONF_COLD_TOLERANCE]
     hot_tolerance: float = config[CONF_HOT_TOLERANCE]
     cooling_temp_modifier: float = config.get(CONF_COOLING_TEMP_MODIFIER, 0.0)
@@ -275,7 +272,6 @@ async def _async_setup_config(
         min_temp=min_temp,
         max_temp=max_temp,
         target_temp=target_temp,
-        min_cycle_duration=min_cycle_duration,
         cold_tolerance=cold_tolerance,
         hot_tolerance=hot_tolerance,
         cooling_temp_modifier=cooling_temp_modifier,
@@ -441,7 +437,6 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         min_temp: float | None,
         max_temp: float | None,
         target_temp: float | None,
-        min_cycle_duration: timedelta | None,
         cold_tolerance: float,
         hot_tolerance: float,
         cooling_temp_modifier: float,
@@ -463,7 +458,6 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         self._presence_entity_id = presence_entity_id
         self._manual_entity_id = manual_entity_id
         self._output_entity_id = output_entity_id
-        self._min_cycle_duration = min_cycle_duration
         self._cold_tolerance = cold_tolerance
         self._hot_tolerance = hot_tolerance
         self._cooling_temp_modifier = cooling_temp_modifier
