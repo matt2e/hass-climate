@@ -722,8 +722,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                     disabled_rooms,
                     # a fan-cycling unit reads as "active" but is not
                     # actually cooling/heating
-                    is_active=bool(self._is_device_active)
-                    and not self._fan_cycle_active,
+                    is_active=self._is_device_active and not self._fan_cycle_active,
                 )
 
             for room in disabled_rooms:
@@ -829,10 +828,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                         blocking=False,
                     )
             else:
-                device_active = self._is_device_active
-                if self._fan_cycle_active or (
-                    device_active is not None and not device_active
-                ):
+                if self._fan_cycle_active or not self._is_device_active:
                     # we are turning AC on (a fan-cycling unit counts as off),
                     # so mark all rooms as not satisfied
                     for room_state in self._room_states.values():
@@ -1623,8 +1619,13 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 self._target_temp = math.floor(temp * 2) / 2
 
     @property
-    def _is_device_active(self) -> bool | None:
-        """If the toggleable device is currently active."""
+    def _is_device_active(self) -> bool:
+        """If the toggleable device is currently active.
+
+        Always returns a bool: the latch (`_last_device_active`) starts False
+        and only ever holds a bool, so dropouts return the last trusted
+        reading rather than None.
+        """
 
         climate_state = self.hass.states.get(self._real_climate_entity_id)
         if climate_state is None or climate_state.state in (
