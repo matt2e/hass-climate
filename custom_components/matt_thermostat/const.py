@@ -14,7 +14,6 @@ CONF_MANUAL = "manual"
 CONF_HOT_TOLERANCE = "hot_tolerance"
 CONF_MAX_TEMP = "max_temp"
 CONF_MIN_TEMP = "min_temp"
-CONF_MIN_DUR = "min_cycle_duration"
 CONF_ROOMS = "rooms"
 DEFAULT_TOLERANCE = 0.4
 DEFAULT_TEMP_MODIFIER = 0.0

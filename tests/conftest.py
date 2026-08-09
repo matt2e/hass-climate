@@ -209,7 +209,6 @@ def make_parent(
         min_temp=16.0,
         max_temp=30.0,
         target_temp=target_temp,
-        min_cycle_duration=None,
         cold_tolerance=cold_tolerance,
         hot_tolerance=hot_tolerance,
         cooling_temp_modifier=cooling_temp_modifier,

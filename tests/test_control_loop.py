@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import pytest
 from homeassistant.components.climate import HVACAction, HVACMode
-from homeassistant.const import ATTR_TEMPERATURE, STATE_OFF, STATE_ON
+from homeassistant.const import (
+    ATTR_TEMPERATURE,
+    STATE_OFF,
+    STATE_ON,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+)
 
 from custom_components.matt_thermostat.climate import RoomMode, RoomState
 
@@ -325,6 +331,60 @@ class TestHvacAction:
         hass = make_hass(real_climate_action=HVACAction.IDLE)
         parent = make_parent(hass, hvac_mode=HVACMode.COOL)
         assert parent.hvac_action == HVACAction.IDLE
+
+
+class TestDeviceActiveLatch:
+    """`_is_device_active` holds its last trusted reading across AC dropouts.
+
+    The real AC drops offline briefly but often. During a dropout the state
+    object carries no attributes, so we must not recompute "is it running?" —
+    we latch the last reading taken while the entity was available and hold it
+    indefinitely.
+    """
+
+    def test_holds_active_reading_when_unavailable(self):
+        parent = make_parent(
+            make_hass(real_climate_action=HVACAction.COOLING),
+            hvac_mode=HVACMode.COOL,
+        )
+        # A read while available latches "active".
+        assert parent._is_device_active is True
+
+        # AC drops offline: the entity goes unavailable, attributes vanish.
+        parent.hass = make_hass(real_climate_state=STATE_UNAVAILABLE)
+        assert parent._is_device_active is True
+
+    def test_holds_inactive_reading_when_unknown(self):
+        parent = make_parent(
+            make_hass(real_climate_action=HVACAction.IDLE),
+            hvac_mode=HVACMode.COOL,
+        )
+        assert parent._is_device_active is False
+
+        parent.hass = make_hass(real_climate_state=STATE_UNKNOWN)
+        assert parent._is_device_active is False
+
+    def test_defaults_inactive_before_first_good_reading(self):
+        parent = make_parent(
+            make_hass(real_climate_state=STATE_UNAVAILABLE),
+            hvac_mode=HVACMode.COOL,
+        )
+        assert parent._is_device_active is False
+
+    def test_latch_updates_when_ac_comes_back(self):
+        parent = make_parent(
+            make_hass(real_climate_action=HVACAction.COOLING),
+            hvac_mode=HVACMode.COOL,
+        )
+        assert parent._is_device_active is True
+
+        # Dropout holds "active"...
+        parent.hass = make_hass(real_climate_state=STATE_UNAVAILABLE)
+        assert parent._is_device_active is True
+
+        # ...then the AC returns, genuinely idle: the latch advances.
+        parent.hass = make_hass(real_climate_action=HVACAction.IDLE)
+        assert parent._is_device_active is False
 
 
 class TestSetHvacMode:
