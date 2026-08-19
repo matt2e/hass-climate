@@ -235,6 +235,135 @@ class TestControlLoopTurnsOffAC:
         assert len(turn_off_calls) == 1
 
 
+class TestControlLoopSealsVentsWhenIdle:
+    @pytest.mark.asyncio
+    async def test_idle_closes_all_open_vents(self):
+        """AC turns off with vents left open → every vent is sealed to 0."""
+        hass = make_hass(
+            room_temps={
+                "sensor.living_room_temp": 21.0,
+                "sensor.bedroom_temp": 21.0,
+                "sensor.office_temp": 21.0,
+            },
+            cover_positions={
+                "cover.living_room_vent": 100,
+                "cover.bedroom_vent": 50,
+                "cover.office_vent": 100,
+            },
+            light_states={
+                "light.living_room": STATE_ON,
+                "light.office": STATE_ON,
+            },
+            real_climate_action=HVACAction.COOLING,
+        )
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.COOL)
+        setup_feedback_switches(hass)
+        for room in parent._rooms:
+            parent._room_states[room.name] = RoomState(
+                mode=RoomMode.PRIMARY, is_satisfied=True, cover_pos=100
+            )
+            if room.light_entity:
+                parent._room_states[room.name].light_on = True
+
+        await parent._async_control_real_climate()
+
+        turn_off_calls = [
+            c
+            for c in hass.services.async_call.call_args_list
+            if c[0][:2] == ("climate", "turn_off")
+        ]
+        assert len(turn_off_calls) == 1
+
+        # Every room should have its vent driven to 0 by the end of the cycle.
+        for room in parent._rooms:
+            closes = [
+                c
+                for c in hass.services.async_call.call_args_list
+                if c[0][:2] == ("cover", "set_cover_position")
+                and c[0][2]["entity_id"] == room.cover_entity
+            ]
+            assert closes, f"no cover call for {room.cover_entity}"
+            assert closes[-1][0][2]["position"] == 0
+
+    @pytest.mark.asyncio
+    async def test_secondary_vent_sealed_when_ac_stops(self):
+        """A secondary room left open from a prior cycle is sealed when idle."""
+        hass = make_hass(
+            room_temps={
+                "sensor.living_room_temp": 21.0,
+                "sensor.bedroom_temp": 21.0,
+                "sensor.office_temp": 21.0,
+            },
+            cover_positions={
+                "cover.living_room_vent": 0,
+                "cover.bedroom_vent": 100,
+                "cover.office_vent": 0,
+            },
+            light_states={
+                "light.living_room": STATE_ON,
+                "light.office": STATE_ON,
+            },
+            real_climate_action=HVACAction.COOLING,
+        )
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.COOL)
+        setup_feedback_switches(hass)
+        for room in parent._rooms:
+            parent._room_states[room.name] = RoomState(
+                mode=RoomMode.PRIMARY, is_satisfied=True
+            )
+            if room.light_entity:
+                parent._room_states[room.name].light_on = True
+        # Bedroom is the secondary "bathroom" left open by a prior on-cycle.
+        parent._room_states["Bedroom"].cover_pos = 100
+
+        await parent._async_control_real_climate()
+
+        bedroom_closes = [
+            c
+            for c in hass.services.async_call.call_args_list
+            if c[0][:2] == ("cover", "set_cover_position")
+            and c[0][2]["entity_id"] == "cover.bedroom_vent"
+        ]
+        assert bedroom_closes
+        assert bedroom_closes[-1][0][2]["position"] == 0
+
+    @pytest.mark.asyncio
+    async def test_no_redundant_cover_writes_when_all_closed(self):
+        """With every vent already closed, the idle path issues no cover calls."""
+        hass = make_hass(
+            room_temps={
+                "sensor.living_room_temp": 21.0,
+                "sensor.bedroom_temp": 21.0,
+                "sensor.office_temp": 21.0,
+            },
+            cover_positions={
+                "cover.living_room_vent": 0,
+                "cover.bedroom_vent": 0,
+                "cover.office_vent": 0,
+            },
+            light_states={
+                "light.living_room": STATE_ON,
+                "light.office": STATE_ON,
+            },
+            real_climate_action=HVACAction.COOLING,
+        )
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.COOL)
+        setup_feedback_switches(hass)
+        for room in parent._rooms:
+            parent._room_states[room.name] = RoomState(
+                mode=RoomMode.PRIMARY, is_satisfied=True
+            )
+            if room.light_entity:
+                parent._room_states[room.name].light_on = True
+
+        await parent._async_control_real_climate()
+
+        cover_calls = [
+            c for c in hass.services.async_call.call_args_list if c[0][0] == "cover"
+        ]
+        assert cover_calls == []
+
+
 class TestTooHotWhileHeating:
     @pytest.mark.asyncio
     async def test_too_hot_above_target_within_tolerance_turns_off_ac(self):

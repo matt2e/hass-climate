@@ -827,6 +827,9 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                         {"entity_id": self._real_climate_entity_id},
                         blocking=False,
                     )
+                    # no air is being pushed, so seal every vent to keep
+                    # ambient air (e.g. shower steam) out of the ducts
+                    await self._close_all_vents()
             else:
                 if self._fan_cycle_active or not self._is_device_active:
                     # we are turning AC on (a fan-cycling unit counts as off),
@@ -1065,6 +1068,20 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         room_state = self._room_states[room.name]
         room_state.is_satisfied = True
         if room_state.cover_pos != 0:
+            room_state.cover_pos = 0
+            await self.hass.services.async_call(
+                "cover",
+                "set_cover_position",
+                {"entity_id": room.cover_entity, "position": 0},
+                blocking=False,
+            )
+
+    async def _close_all_vents(self) -> None:
+        """Close every room's vent; the unit is delivering no air this cycle."""
+        for room in self._rooms:
+            room_state = self._room_states[room.name]
+            if room_state.cover_pos == 0:
+                continue
             room_state.cover_pos = 0
             await self.hass.services.async_call(
                 "cover",
