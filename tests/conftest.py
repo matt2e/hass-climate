@@ -105,7 +105,6 @@ def make_hass(
     """
     hass = MagicMock(spec=HomeAssistant)
     hass.services = MagicMock()
-    hass.services.async_call = AsyncMock()
     hass.data = {}
 
     temps = room_temps or {}
@@ -144,6 +143,21 @@ def make_hass(
 
     hass.states = MagicMock()
     hass.states.get = lambda eid: state_map.get(eid)
+
+    # Model a real vent: commanding set_cover_position moves current_position,
+    # so a vent read back later in the same or a later cycle reflects the move.
+    # Without this the mock stays frozen and code that (correctly) re-checks a
+    # vent's physical position — like the idle safety seal — would appear to
+    # spam redundant calls that never happen against a real cover.
+    async def _async_call(domain, service, data=None, blocking=False):
+        if domain == "cover" and service == "set_cover_position" and data:
+            entity_id = data.get("entity_id")
+            if entity_id in state_map:
+                state_map[entity_id] = make_state(
+                    "open", {"current_position": data.get("position", 0)}
+                )
+
+    hass.services.async_call = AsyncMock(side_effect=_async_call)
 
     return hass
 

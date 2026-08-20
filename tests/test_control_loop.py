@@ -363,6 +363,49 @@ class TestControlLoopSealsVentsWhenIdle:
         ]
         assert cover_calls == []
 
+    @pytest.mark.asyncio
+    async def test_seal_uses_physical_position_when_model_diverges(self):
+        """Model says closed but the vent is physically open → seal it anyway.
+
+        After a HA restart cover_pos defaults to 0 while a vent may be left
+        open (and external moves make the model stale). The seal must decide
+        from the vent's real current_position, not the in-memory belief.
+        """
+        hass = make_hass(
+            cover_positions={
+                "cover.living_room_vent": 0,
+                "cover.bedroom_vent": 100,
+                "cover.office_vent": 0,
+            },
+        )
+        parent = make_parent(hass, target_temp=22.0, hvac_mode=HVACMode.COOL)
+        # Model believes every vent is already closed, diverging from the
+        # physically-open bedroom vent.
+        for room in parent._rooms:
+            parent._room_states[room.name] = RoomState(
+                mode=RoomMode.PRIMARY, is_satisfied=True, cover_pos=0
+            )
+
+        await parent._close_all_vents()
+
+        bedroom_closes = [
+            c
+            for c in hass.services.async_call.call_args_list
+            if c[0][:2] == ("cover", "set_cover_position")
+            and c[0][2]["entity_id"] == "cover.bedroom_vent"
+        ]
+        assert bedroom_closes, "physically-open vent was not sealed"
+        assert bedroom_closes[-1][0][2]["position"] == 0
+
+        # Genuinely-closed vents issue no redundant service calls.
+        other_closes = [
+            c
+            for c in hass.services.async_call.call_args_list
+            if c[0][:2] == ("cover", "set_cover_position")
+            and c[0][2]["entity_id"] != "cover.bedroom_vent"
+        ]
+        assert other_closes == []
+
 
 class TestTooHotWhileHeating:
     @pytest.mark.asyncio

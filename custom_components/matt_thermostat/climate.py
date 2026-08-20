@@ -1080,9 +1080,18 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         """Close every room's vent; the unit is delivering no air this cycle."""
         for room in self._rooms:
             room_state = self._room_states[room.name]
-            if room_state.cover_pos == 0:
-                continue
+            # Skip based on the vent's physical position, not the in-memory
+            # model: after a HA restart cover_pos defaults to 0 while a vent may
+            # be left open, and external moves make the model stale. Trusting
+            # the model would silently defeat this safety seal. Write the model
+            # to 0 unconditionally so it stays authoritative next cycle.
+            cover_state = self.hass.states.get(room.cover_entity)
+            cover_pos = (
+                cover_state.attributes.get("current_position", 0) if cover_state else 0
+            )
             room_state.cover_pos = 0
+            if cover_pos == 0:
+                continue
             await self.hass.services.async_call(
                 "cover",
                 "set_cover_position",
