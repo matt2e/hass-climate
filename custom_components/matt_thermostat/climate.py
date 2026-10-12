@@ -107,7 +107,7 @@ SENSOR_UNAVAILABLE_GRACE = timedelta(minutes=5)
 # Many battery sensors only report when the value changes, so a healthy sensor
 # in a room holding steady (overnight, AC idle) can go silent for hours. The
 # idle timeout is therefore long and only catches sensors that are truly dead.
-SENSOR_STALE_TIMEOUT = timedelta(hours=8)
+SENSOR_STALE_IDLE_TIMEOUT = timedelta(hours=8)
 # While a room is actively being heated/cooled (unit cooling/heating and the
 # room's vent open) its temperature must move, so a healthy sensor reports
 # within minutes. Silence that long while conditioning means the sensor is
@@ -1110,7 +1110,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             timeout = SENSOR_STALE_CONDITIONING_TIMEOUT
         else:
             silent_for = now - last_reported
-            timeout = SENSOR_STALE_TIMEOUT
+            timeout = SENSOR_STALE_IDLE_TIMEOUT
         if silent_for < timeout:
             return False
 

@@ -9,7 +9,7 @@ many battery sensors only report on change, so silence alone is ambiguous:
   temperature must move, so silence past SENSOR_STALE_CONDITIONING_TIMEOUT
   (30 min, counted from when conditioning began) means the sensor is dead.
 - Otherwise a steady room can legitimately be silent for hours, so only
-  SENSOR_STALE_TIMEOUT (8 h) is treated as dead.
+  SENSOR_STALE_IDLE_TIMEOUT (8 h) is treated as dead.
 
 A stale room is neutralized (marked satisfied, vent closed) and stays that way
 until the sensor reports again, so a dead sensor can't cycle the AC.
