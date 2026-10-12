@@ -101,10 +101,20 @@ SENSOR_UNAVAILABLE_GRACE = timedelta(minutes=5)
 # A sensor can keep publishing its last value long after it has actually
 # stopped updating (dead battery, lost connectivity) without ever going
 # unavailable. Once its state has not been written (last_reported) for longer
-# than this, treat the reading as stale and neutralize the room until a fresh
-# value arrives. The threshold sits above the slowest common battery-sensor
-# heartbeat so healthy sensors in stable rooms are not false-triggered.
-SENSOR_STALE_TIMEOUT = timedelta(minutes=20)
+# than a timeout, treat the reading as stale and neutralize the room until a
+# fresh value arrives (see _is_sensor_stale).
+#
+# Many battery sensors only report when the value changes, so a healthy sensor
+# in a room holding steady (overnight, AC idle) can go silent for hours. The
+# idle timeout is therefore long and only catches sensors that are truly dead.
+SENSOR_STALE_IDLE_TIMEOUT = timedelta(hours=8)
+# While a room is actively being heated/cooled (unit cooling/heating and the
+# room's vent open) its temperature must move, so a healthy sensor reports
+# within minutes. Silence that long while conditioning means the sensor is
+# dead and the room is running away, so cut it off much sooner. Measured from
+# when conditioning began, not the last report, so a sensor that was quiet
+# overnight is not instantly condemned the moment the AC starts.
+SENSOR_STALE_CONDITIONING_TIMEOUT = timedelta(minutes=30)
 
 
 # Global config shared by the YAML platform and the UI config entry. The rooms
@@ -328,6 +338,14 @@ class RoomState:
     # true once a stale sensor has been logged; cleared when it reports again,
     # so each outage warns exactly once
     sensor_stale_warned: bool = False
+    # tz-aware UTC time this room started being actively conditioned (unit
+    # cooling/heating with the vent open); None while it is not
+    conditioning_since: datetime | None = None
+    # the sensor's last_reported when it was judged stale. The room stays
+    # neutralized until last_reported moves past this, so closing the vent
+    # (which drops the room back to the long idle timeout) can't revive a dead
+    # sensor's frozen reading and restart the AC on it
+    stale_report_at: datetime | None = None
 
 
 @dataclass
@@ -474,6 +492,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         ]
         self._active = False
         self._last_device_active = False
+        self._last_device_conditioning = False
         self._fan_cycle_active = False
         self._fan_cycle_started_at: datetime | None = None
         self._fan_cycle_blocked_until: datetime | None = None
@@ -684,6 +703,10 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
                 # underlying AC and covers to their off/idle states. Child
                 # thermostats may also be in a manual mode that requires the AC
                 # to remain on even when the parent is away or set to OFF.
+
+            # Before any sensor is read, so every room (including secondaries
+            # that are only read while the AC runs) has an up-to-date clock.
+            self._update_conditioning_clocks()
 
             # --- Control loop ---
             custom_rooms = []
@@ -1007,8 +1030,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         been out and, once the grace period lapses, neutralizes the room so a
         dead sensor can no longer hold the AC on (primary/custom) or a vent
         open (secondary). A sensor that keeps its last numeric value but stops
-        reporting (last_reported older than SENSOR_STALE_TIMEOUT) is treated
-        the same way.
+        reporting (see _is_sensor_stale) is treated the same way.
         """
         room_state = self._room_states[room.name]
         sensor_state = self.hass.states.get(room.sensor_entity)
@@ -1038,23 +1060,20 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         room_state.sensor_unavailable_since = None
         room_state.sensor_unavailable_warned = False
 
-        # last_reported is bumped on every write, even when the value is
-        # unchanged, so its age is exactly how long the sensor has been silent.
-        # It is tz-aware UTC, so compare against dt_util.utcnow() (naive
-        # datetime.now() would raise). If it stays silent past the timeout,
-        # stop trusting the frozen value and neutralize the room.
+        # If the sensor has gone silent past its timeout, stop trusting the
+        # frozen value and neutralize the room.
         last_reported = sensor_state.last_reported
-        if (
-            last_reported is not None
-            and dt_util.utcnow() - last_reported >= SENSOR_STALE_TIMEOUT
-        ):
+        if self._is_sensor_stale(room, last_reported):
             if not room_state.sensor_stale_warned:
                 _LOGGER.warning(
-                    "Room %s temperature sensor %s has not reported for over "
-                    "%s; neutralizing the room until it updates again",
+                    "Room %s temperature sensor %s has not reported for %s "
+                    "(%s); neutralizing the room until it updates again",
                     room.name,
                     room.sensor_entity,
-                    SENSOR_STALE_TIMEOUT,
+                    dt_util.utcnow() - last_reported,
+                    "while being conditioned"
+                    if room_state.conditioning_since is not None
+                    else "while idle",
                 )
                 room_state.sensor_stale_warned = True
             await self._neutralize_room(room)
@@ -1062,6 +1081,63 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
 
         room_state.sensor_stale_warned = False
         return float(sensor_state.state)
+
+    def _is_sensor_stale(self, room: Room, last_reported: datetime | None) -> bool:
+        """Whether a readable sensor has been silent too long to trust.
+
+        last_reported is tz-aware UTC (compare against dt_util.utcnow();
+        naive datetime.now() would raise). The timeout depends on whether the
+        room is being actively conditioned (see SENSOR_STALE_* constants).
+        Once stale, the room stays stale until last_reported moves: otherwise
+        neutralizing it (vent closed, so no longer conditioned) would drop it
+        back to the long idle timeout and its frozen reading would restart the
+        AC, cycling a dead sensor's room on and off indefinitely.
+        """
+        if last_reported is None:
+            return False
+        room_state = self._room_states[room.name]
+        if room_state.stale_report_at is not None:
+            if last_reported <= room_state.stale_report_at:
+                return True
+            # a fresh report: the sensor is alive again
+            room_state.stale_report_at = None
+
+        now = dt_util.utcnow()
+        if room_state.conditioning_since is not None:
+            # count silence from when conditioning began, so a sensor that
+            # was legitimately quiet beforehand gets the full window
+            silent_for = now - max(last_reported, room_state.conditioning_since)
+            timeout = SENSOR_STALE_CONDITIONING_TIMEOUT
+        else:
+            silent_for = now - last_reported
+            timeout = SENSOR_STALE_IDLE_TIMEOUT
+        if silent_for < timeout:
+            return False
+
+        room_state.stale_report_at = last_reported
+        return True
+
+    def _update_conditioning_clocks(self) -> None:
+        """Track when each room started being actively heated/cooled.
+
+        A room is being conditioned while the real unit is cooling/heating
+        (not fan cycling) and the room's vent is physically open. The vent is
+        read from the cover rather than the in-memory model so the clock only
+        starts once air is actually flowing.
+        """
+        conditioning = self._is_device_conditioning and not self._fan_cycle_active
+        now = dt_util.utcnow()
+        for room in self._rooms:
+            room_state = self._room_states[room.name]
+            cover_state = self.hass.states.get(room.cover_entity)
+            cover_pos = (
+                cover_state.attributes.get("current_position", 0) if cover_state else 0
+            )
+            if conditioning and cover_pos > 0:
+                if room_state.conditioning_since is None:
+                    room_state.conditioning_since = now
+            else:
+                room_state.conditioning_since = None
 
     async def _neutralize_room(self, room: Room) -> None:
         """Stop a room with a dead sensor from generating AC demand."""
@@ -1237,11 +1313,11 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
         """Read a room's current temperature, or None if it can't be trusted.
 
         Returns None when the sensor is unavailable/unknown or has gone stale
-        (last_reported older than SENSOR_STALE_TIMEOUT), mirroring
-        _read_demand_room_temp. A frozen reading from a dead sensor must not be
-        trusted for fan-cycling decisions any more than for demand: otherwise a
-        room the demand loop just neutralized would still look "needy" here and
-        keep the unit fan-cycling instead of letting it turn off.
+        (see _is_sensor_stale), mirroring _read_demand_room_temp. A frozen
+        reading from a dead sensor must not be trusted for fan-cycling
+        decisions any more than for demand: otherwise a room the demand loop
+        just neutralized would still look "needy" here and keep the unit
+        fan-cycling instead of letting it turn off.
         """
         sensor_state = self.hass.states.get(room.sensor_entity)
         if sensor_state is None or sensor_state.state in (
@@ -1249,11 +1325,7 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             STATE_UNKNOWN,
         ):
             return None
-        last_reported = sensor_state.last_reported
-        if (
-            last_reported is not None
-            and dt_util.utcnow() - last_reported >= SENSOR_STALE_TIMEOUT
-        ):
+        if self._is_sensor_stale(room, sensor_state.last_reported):
             return None
         return float(sensor_state.state)
 
@@ -1670,3 +1742,24 @@ class ParentThermostat(ClimateEntity, RestoreEntity):
             HVACAction.OFF,
         )
         return self._last_device_active
+
+    @property
+    def _is_device_conditioning(self) -> bool:
+        """If the real unit is actually cooling or heating (not fan/idle/off).
+
+        Narrower than _is_device_active, which also counts fan-only running.
+        Latched across dropouts the same way.
+        """
+        climate_state = self.hass.states.get(self._real_climate_entity_id)
+        if climate_state is None or climate_state.state in (
+            STATE_UNAVAILABLE,
+            STATE_UNKNOWN,
+        ):
+            return self._last_device_conditioning
+
+        real_hvac_action = climate_state.attributes.get("hvac_action")
+        self._last_device_conditioning = real_hvac_action in (
+            HVACAction.COOLING,
+            HVACAction.HEATING,
+        )
+        return self._last_device_conditioning
